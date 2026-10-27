@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>売上CSVで今月をふり返るボード</title>
+<meta name="description" content="売上のCSVを選ぶか表を貼ると、今月の合計・先月の同じ日数までとの比較・日ごとと曜日ごとの売上・よく売れた物が1画面に出ます。CSVはこのページの中だけで読み、保存も送信もしません。">
+<style>
+  :root {
+    --bg: #faf6f3; --surface: #ffffff; --ink: #24150f; --ink2: #4a3a33; --ink3: #64544c;
+    --line: #e6dbd5; --line-strong: #8a776e; --accent: #8F3B2A; --accent-ink: #ffffff; --accent-soft: #f6e4de; --accent-fill: #c0634d;
+    --prev: #5c6670; --mark: #64544c; --danger: #a8231b; --danger-soft: #fbe9e7; --notice: #f3ece8;
+    --font: "Hiragino Sans","Yu Gothic","BIZ UDPGothic","Noto Sans JP",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161110; --surface: #211a18; --ink: #f5ebe7; --ink2: #ddcfc9; --ink3: #bfaea7;
+      --line: #3d322e; --line-strong: #9c8a82; --accent: #E8957F; --accent-ink: #2a0f08; --accent-soft: #3e2620; --accent-fill: #d8806a;
+      --prev: #b5c0ca; --mark: #bfaea7; --danger: #ff9a92; --danger-soft: #3a1f1c; --notice: #272019;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.6; }
+  main { max-width: 1080px; margin: 0 auto; padding: 16px 16px 32px; }
+  h1 { font-size: 22px; line-height: 1.3; margin: 8px 0 8px; }
+  h2 { font-size: 18px; line-height: 1.4; margin: 0 0 10px; }
+  p { margin: 0 0 10px; }
+  .lead { color: var(--ink2); }
+  .small { font-size: 14px; color: var(--ink3); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; min-width: 0; }
+  .notice { background: var(--notice); border: 1px solid var(--line-strong); border-left: 6px solid var(--accent); border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; color: var(--ink2); }
+  label.f { display: block; font-weight: 600; margin: 0 0 4px; }
+  select, textarea {
+    display: block; width: 100%; max-width: 100%; min-width: 0; min-height: 44px; font: inherit; font-size: 16px; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 6px; padding: 8px 10px; margin: 0 0 10px; }
+  textarea { resize: vertical; min-height: 96px; font-size: 14px; }
+  button, .filebtn { font: inherit; font-size: 16px; min-height: 44px; min-width: 44px; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line-strong);
+    background: var(--surface); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+  button.primary, .filebtn { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .filebtn:focus-within, button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  .errors { border: 2px solid var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
+  .status { font-weight: 600; color: var(--ink2); overflow-wrap: anywhere; }
+  details.paste > summary, details.cols > summary, details.tbl > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
+  .cols-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 12px; margin-top: 8px; }
+  .chk { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: 0 0 8px; }
+  .chk input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+  /* 月の切り替え */
+  .monthbar { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+  .monthbar h2 { flex: 1 1 auto; text-align: center; margin: 0; font-size: 19px; }
+  .monthbar h2 small { display: block; font-size: 13px; font-weight: 400; color: var(--ink3); }
+  .monthbar button { flex: none; padding: 6px 10px; font-size: 15px; }
+  /* 数字のカード */
+  .cards { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 0 0 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  .card .k { font-size: 13px; color: var(--ink3); font-weight: 600; line-height: 1.4; }
+  .card .v { font-size: 23px; font-weight: 800; line-height: 1.25; margin: 2px 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .card .v.mid { font-size: 20px; }
+  .card .s { font-size: 13px; color: var(--ink2); line-height: 1.45; overflow-wrap: anywhere; }
+  .card.cmp .v { color: var(--accent); }
+  /* グラフ */
+  .chart-wrap { position: relative; min-width: 0; }
+  svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+  svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+  svg.chart .axis { fill: var(--ink3); font-size: 12px; font-family: var(--font); }
+  svg.chart .bar { fill: var(--accent-fill); }
+  svg.chart .bar.sel { fill: var(--accent); }
+  svg.chart .prev { fill: none; stroke: var(--prev); stroke-width: 2; stroke-dasharray: 5 4; }
+  svg.chart .prev-dot { fill: var(--prev); }
+  svg.chart .wk { fill: var(--mark); }
+  svg.chart .hit { fill: transparent; cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink2); margin: 6px 0 0; }
+  .legend i { display: inline-block; vertical-align: middle; margin-right: 4px; }
+  .lg-bar { width: 12px; height: 12px; background: var(--accent-fill); border-radius: 2px; }
+  .lg-prev { width: 18px; height: 0; border-top: 2px dashed var(--prev); }
+  .lg-wk { width: 6px; height: 6px; border-radius: 50%; background: var(--mark); }
+  .tip-line { min-height: 1.6em; font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 0 4px; font-variant-numeric: tabular-nums; }
+  /* 横棒（曜日別・よく売れた物） */
+  .hbars { list-style: none; margin: 0; padding: 0; }
+  .hbars li { display: grid; grid-template-columns: 4.6em minmax(0, 1fr); gap: 2px 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .hbars li:last-child { border-bottom: 0; }
+  .hbars .lb { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .hbars .lb small { display: block; font-weight: 400; font-size: 12px; color: var(--ink3); }
+  .hbars .track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .hbars .fill { height: 14px; background: var(--accent-fill); border-radius: 2px; flex: none; min-width: 2px; }
+  .hbars .num { font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .hbars.items li { grid-template-columns: minmax(0, 1fr); }
+  .hbars.items .lb { overflow-wrap: anywhere; }
+  .hbars .none { color: var(--ink3); font-size: 14px; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  table.data th, table.data td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: right; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  .tbl-scroll { max-height: 320px; overflow-y: auto; }
+  .warn { font-size: 14px; color: var(--ink2); margin: 0 0 6px; }
+  .saved img { display: block; width: 100%; max-width: 432px; height: auto; border: 1px solid var(--line); margin: 8px 0; }
+  .mw-footer { box-sizing: border-box; width: 100%; max-width: 100%; margin: 24px 0 0; padding: 16px; background: #F7F7F8;
+    border: 1px solid #D8D8DC; border-radius: 6px; color: #3A3A3E; font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.7; }
+  .mw-footer p { margin: 0 0 6px; } .mw-footer p:last-child { margin-bottom: 0; } .mw-footer a { color: #0B5AA6; display: inline-block; padding: 13px 0; }
+  @media (min-width: 600px) {
+    .cols-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  }
+  @media (min-width: 880px) {
+    .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    .lower > .panel { margin-bottom: 0; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>売上CSVで今月をふり返るボード</h1>
+  <p class="lead">売上のCSVを選ぶか表を貼ると、今月の合計・先月の同じ日数までとの比較・日ごとと曜日ごとの売上・よく売れた物が1画面に出ます。</p>
+  <div id="app"></div>
+  <footer class="mw-footer">
+    <p>みちAIワークス（MICHI AI WORKS）／代表 田中　泉</p>
+    <p>運営: <a href="https://michi-portfolio.vercel.app/" rel="noopener">みちAIワークス 公式サイト</a>（https://michi-portfolio.vercel.app/ ）／ お問い合わせ: <a href="mailto:nncf123nncf@gmail.com">nncf123nncf@gmail.com</a></p>
+    <p>読み込んだCSVや貼り付けた表は、お使いの端末のブラウザの中だけで集計し、保存も送信もしません。この端末に残すのは、どの列を日付・金額として使うかの選び方（列の見出しの文字）だけです。アクセス解析（Cloudflare Web Analytics）で、ページの閲覧状況（閲覧数・参照元・ブラウザの種類など）を計測しています。</p>
+    <p>ログイン・会員登録・パスワードの入力を求めることはありません。</p>
+  </footer>
+</main>
+
+<script id="core">
+var SB = (function () {
+  var COLS_KEY = 'sales-month-board-cols-v1';
+  var MAX_ROWS = 50000, MAX_BYTES = 10 * 1024 * 1024;
+  var WD = ['日', '月', '火', '水', '木', '金', '土'];
+
+  // 国民の祝日（振替休日・国民の休日を含む）。2025〜2027年だけ持つ
+  var HOLIDAYS = {
+    2025: ['01-01', '01-13', '02-11', '02-23', '02-24', '03-20', '04-29', '05-03', '05-04', '05-05', '05-06', '07-21', '08-11', '09-15', '09-23', '10-13', '11-03', '11-23', '11-24'],
+    2026: ['01-01', '01-12', '02-11', '02-23', '03-20', '04-29', '05-03', '05-04', '05-05', '05-06', '07-20', '08-11', '09-21', '09-22', '09-23', '10-12', '11-03', '11-23'],
+    2027: ['01-01', '01-11', '02-11', '02-23', '03-21', '03-22', '04-29', '05-03', '05-04', '05-05', '07-19', '08-11', '09-20', '09-23', '10-11', '11-03', '11-23']
+  };
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function isHoliday(y, m, d) { var l = HOLIDAYS[y]; return l ? l.indexOf(pad2(m) + '-' + pad2(d)) >= 0 : null; }
+  function daysIn(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  function weekday(y, m, d) { return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }
+  function prevYm(y, m) { return m === 1 ? [y - 1, 12] : [y, m - 1]; }
+  function ymKey(y, m) { return y * 100 + m; }
+
+  // バイト列 → 文字。UTF-8で読めなければShift_JIS
+  function decodeBytes(bytes) {
+    var text, enc = 'UTF-8';
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch (e) { text = new TextDecoder('shift_jis').decode(bytes); enc = 'Shift_JIS'; }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    return { text: text, encoding: enc };
+  }
+
+  // 区切り文字の判定（最初の空でない行で、引用符の外のタブとカンマを数える）
+  function detectDelim(text) {
+    var line = '', inQ = false, i, tabs = 0, commas = 0;
+    for (i = 0; i < text.length; i++) {
+      var c = text[i];
+      if (c === '"') inQ = !inQ;
+      else if (!inQ && (c === '\n' || c === '\r')) { if (tabs + commas > 0 || line.trim()) break; line = ''; continue; }
+      else if (!inQ && c === '\t') tabs++;
+      else if (!inQ && c === ',') commas++;
+      line += c;
+    }
+    return tabs > commas ? '\t' : ',';
+  }
+
+  // CSV／TSVを行の配列に（引用符の中のカンマ・改行・""に対応）。空の行は捨てる
+  function parseTable(text, delim) {
+    delim = delim || detectDelim(text);
+    var rows = [], row = [], cell = '', inQ = false, i = 0, n = text.length, c;
+    function endCell() { row.push(cell); cell = ''; }
+    function endRow() { endCell(); if (row.some(function (x) { return x.trim() !== ''; })) rows.push(row); row = []; }
+    for (; i < n; i++) {
+      c = text[i];
+      if (inQ) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else inQ = false; }
+        else cell += c;
+      } else if (c === '"' && cell.trim() === '') { cell = ''; inQ = true; }
+      else if (c === delim) endCell();
+      else if (c === '\r') { if (text[i + 1] === '\n') i++; endRow(); }
+      else if (c === '\n') endRow();
+      else cell += c;
+    }
+    if (cell !== '' || row.length) endRow();
+    return { rows: rows, delim: delim };
+  }
+
+  function norm(s) { return String(s == null ? '' : s).normalize('NFKC').trim(); }
+
+  // 日付。読めたら {y, m, d}、読めなければ null
+  function parseDate(s) {
+    s = norm(s);
+    var r = /^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:$|[\sT])/.exec(s) ||
+      /^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/.exec(s) ||
+      /^(\d{4})(\d{2})(\d{2})(?:$|[\sT])/.exec(s);
+    if (!r) return null;
+    var y = +r[1], m = +r[2], d = +r[3];
+    if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > daysIn(y, m)) return null;
+    return { y: y, m: m, d: d };
+  }
+
+  // 金額。読めたら数、読めなければ null
+  function parseAmount(s) {
+    s = norm(s);
+    if (!s) return null;
+    var neg = false;
+    if (/^[△▲]/.test(s)) { neg = true; s = s.slice(1).trim(); }
+    var p = /^\((.*)\)$/.exec(s); if (p) { neg = !neg; s = p[1].trim(); }
+    s = s.replace(/[−‒–—―]/g, '-').replace(/^[¥$]\s*/, '').replace(/^(-)\s*[¥$]\s*/, '$1').replace(/\s*円$/, '');
+    if (!/^[+-]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/.test(s)) return null;
+    var v = parseFloat(s.replace(/,/g, ''));
+    if (!isFinite(v)) return null;
+    return neg ? -v : v;
+  }
+
+  var KW = {
+    date: /日付|日時|売上日|注文日|会計日|取引日|販売日|年月日|date|day/i,
+    amountTop: /合計|税込|total/i,
+    amount: /金額|売上|売り上げ|代金|小計|価格|amount|price|sales/i,
+    notAmount: /番号|no\.?$|^no|id$|^id|コード|code|数量|個数|点数|qty|quantity|電話|郵便|〒|率|%|ポイント|point|年齢|時間|時刻|time/i,
+    item: /商品|品名|品目|メニュー|サービス|コース|item|product|menu/i,
+    qty: /数量|個数|点数|qty|quantity/i
+  };
+
+  // 1行目が見出しかどうか（日付として読めるセルがあれば、見出しではないとみなす）
+  function looksLikeHeader(row) {
+    return !row.some(function (c) { return parseDate(c); }) && row.some(function (c) { return parseAmount(c) === null && norm(c) !== ''; });
+  }
+
+  // 列の推測
+  function guessColumns(rows, hasHeader) {
+    var head = hasHeader ? rows[0] : [], body = rows.slice(hasHeader ? 1 : 0, (hasHeader ? 1 : 0) + 300);
+    var width = rows.reduce(function (a, r) { return Math.max(a, r.length); }, 0);
+    var st = [], i;
+    for (i = 0; i < width; i++) {
+      var filled = 0, dates = 0, nums = 0, abs = 0;
+      body.forEach(function (r) {
+        var v = r[i]; if (v == null || norm(v) === '') return;
+        filled++; if (parseDate(v)) dates++;
+        var a = parseAmount(v); if (a !== null) { nums++; abs += Math.abs(a); }
+      });
+      var h = norm(head[i] || '');
+      st.push({ i: i, h: h, dateR: filled ? dates / filled : 0, numR: filled ? nums / filled : 0, mean: nums ? abs / nums : 0, filled: filled });
+    }
+    function best(list, score) {
+      var top = null, ts = -Infinity;
+      list.forEach(function (c) { var s = score(c); if (s > ts) { ts = s; top = c; } });
+      return top;
+    }
+    // 見出しの言葉が合う列は、読める値が5割以上あれば候補にする（読めない行が少し混ざるCSVのため）
+    var dateCands = st.filter(function (c) { return c.filled && (c.dateR >= 0.8 || KW.date.test(c.h) && c.dateR >= 0.5); });
+    var dateCol = best(dateCands, function (c) { return (KW.date.test(c.h) ? 10 : 0) - c.i * 0.01; });
+    var amtCands = st.filter(function (c) { return c.filled && (c.numR >= 0.8 || (KW.amount.test(c.h) || KW.amountTop.test(c.h)) && c.numR >= 0.5) && (!dateCol || c.i !== dateCol.i) && !KW.notAmount.test(c.h); });
+    var amtCol = best(amtCands, function (c) {
+      var s = 0;
+      if (KW.amountTop.test(c.h) && KW.amount.test(c.h)) s = 30; else if (KW.amountTop.test(c.h)) s = 25; else if (KW.amount.test(c.h)) s = 20;
+      return s + Math.log(1 + c.mean) / 100 + c.i * 0.0001;
+    });
+    var itemCol = hasHeader ? best(st.filter(function (c) { return KW.item.test(c.h) && c.numR < 0.5 && (!dateCol || c.i !== dateCol.i); }), function (c) { return -c.i; }) : null;
+    var qtyCol = hasHeader ? best(st.filter(function (c) { return KW.qty.test(c.h) && c.numR >= 0.8 && (!amtCol || c.i !== amtCol.i); }), function (c) { return -c.i; }) : null;
+    return {
+      date: dateCol ? dateCol.i : -1, amount: amtCol ? amtCol.i : -1,
+      item: itemCol ? itemCol.i : -1, qty: qtyCol ? qtyCol.i : -1, width: width
+    };
+  }
+
+  // 行 → 記録
+  function toRecords(rows, hasHeader, cols) {
+    var recs = [], bad = 0, neg = 0, truncated = false;
+    var start = hasHeader ? 1 : 0, end = rows.length;
+    if (end - start > MAX_ROWS) { end = start + MAX_ROWS; truncated = true; }
+    for (var i = start; i < end; i++) {
+      var r = rows[i], dt = parseDate(r[cols.date]), a = parseAmount(r[cols.amount]);
+      if (!dt || a === null) { bad++; continue; }
+      if (a < 0) neg++;
+      var rec = { y: dt.y, m: dt.m, d: dt.d, a: a };
+      if (cols.item >= 0) rec.item = norm(r[cols.item]) || '（名前なし）';
+      if (cols.qty >= 0) { var q = parseAmount(r[cols.qty]); rec.q = q === null ? 0 : q; }
+      recs.push(rec);
+    }
+    return { recs: recs, bad: bad, neg: neg, truncated: truncated, total: end - start };
+  }
+
+  function months(recs) {
+    var seen = {};
+    recs.forEach(function (r) { seen[ymKey(r.y, r.m)] = 1; });
+    return Object.keys(seen).map(Number).sort(function (a, b) { return a - b; }).map(function (k) { return [Math.floor(k / 100), k % 100]; });
+  }
+
+  function dayTable(recs, y, m) {
+    var dim = daysIn(y, m), sum = [], has = [], i;
+    for (i = 0; i <= dim; i++) { sum.push(0); has.push(false); }
+    recs.forEach(function (r) { if (r.y === y && r.m === m) { sum[r.d] += r.a; has[r.d] = true; } });
+    return { dim: dim, sum: sum, has: has };
+  }
+
+  // 1か月の集計
+  function monthStats(recs, y, m, latest) {
+    var cur = dayTable(recs, y, m), pv = prevYm(y, m), prev = dayTable(recs, pv[0], pv[1]);
+    var lastDay = 0, d;
+    for (d = 1; d <= cur.dim; d++) if (cur.has[d]) lastDay = d;
+    var partial = !!latest && lastDay < cur.dim;
+    var upto = partial ? lastDay : cur.dim;
+    var prevUpto = partial ? Math.min(lastDay, prev.dim) : prev.dim;
+    function range(t, to) { var s = 0, n = 0; for (var k = 1; k <= to; k++) if (t.has[k]) { s += t.sum[k]; n++; } return { total: s, days: n }; }
+    var c = range(cur, cur.dim), pr = range(prev, prevUpto);
+    var prevExists = prev.has.some(Boolean);
+    var best = 0;
+    for (d = 1; d <= cur.dim; d++) if (cur.has[d] && (!best || cur.sum[d] > cur.sum[best])) best = d;
+    var wd = [0, 1, 2, 3, 4, 5, 6].map(function (w) { return { w: w, total: 0, days: 0 }; });
+    for (d = 1; d <= cur.dim; d++) if (cur.has[d]) { var o = wd[weekday(y, m, d)]; o.total += cur.sum[d]; o.days++; }
+    wd.forEach(function (o) { o.avg = o.days ? o.total / o.days : 0; });
+    var items = null;
+    if (recs.length && recs[0].item !== undefined) {
+      var map = {};
+      recs.forEach(function (r) {
+        if (r.y !== y || r.m !== m) return;
+        var e = map[r.item] || (map[r.item] = { name: r.item, total: 0, q: 0 });
+        e.total += r.a; if (r.q !== undefined) e.q += r.q;
+      });
+      items = Object.keys(map).map(function (k) { return map[k]; })
+        .sort(function (a, b) { return b.total - a.total || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); }).slice(0, 5);
+    }
+    return {
+      y: y, m: m, dim: cur.dim, days: cur, prevDays: prev, prevY: pv[0], prevM: pv[1],
+      partial: partial, lastDay: lastDay, upto: upto, prevUpto: prevUpto,
+      total: c.total, salesDays: c.days, perDay: c.days ? c.total / c.days : 0,
+      prevExists: prevExists, prevTotal: pr.total, prevDaysN: pr.days, prevPerDay: pr.days ? pr.total / pr.days : 0,
+      diff: c.total - pr.total, pct: prevExists && pr.total > 0 ? (c.total - pr.total) / pr.total * 100 : null,
+      best: best, bestAmt: best ? cur.sum[best] : 0, weekdays: wd, items: items,
+      hasQty: recs.length > 0 && recs[0].q !== undefined
+    };
+  }
+
+  // 表示用
+  function yen(n) { return Math.round(n).toLocaleString('ja-JP') + '円'; }
+  function signed(n) { var r = Math.round(n); return r === 0 ? '±0円' : (r > 0 ? '＋' : '−') + Math.abs(r).toLocaleString('ja-JP') + '円'; }
+  function pctText(p) { if (p === null) return ''; var r = Math.round(p * 10) / 10; return r === 0 ? '±0%' : (r > 0 ? '＋' : '−') + Math.abs(r).toFixed(1) + '%'; }
+  function dayLabel(y, m, d) { var h = isHoliday(y, m, d); return m + '月' + d + '日（' + WD[weekday(y, m, d)] + (h ? '・祝' : '') + '）'; }
+  function axisYen(n) { return n >= 10000 ? (Math.round(n / 1000) / 10).toString().replace(/\.0$/, '') + '万' : Math.round(n).toLocaleString('ja-JP'); }
+  // 目盛り: 4本前後で、1・2・2.5・5の切りのよい刻みにする
+  function niceScale(v) {
+    if (v <= 0) return { top: 1000, step: 250, n: 4 };
+    var raw = v / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    var step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+    var n = Math.max(1, Math.ceil(v / step - 1e-9));
+    return { top: step * n, step: step, n: n };
+  }
+  // 先月の点線: 売上のあった日だけをつなぎ、売上の無い日（定休日など）で線を切る
+  function prevRuns(prev, upto) {
+    var runs = [], cur = null;
+    for (var d = 1; d <= upto; d++) {
+      if (prev.has[d]) { if (!cur) runs.push(cur = []); cur.push(d); } else cur = null;
+    }
+    return runs;
+  }
+
+  // 見出しで列の選び方を覚える（見出しの文字だけを保存。データは保存しない）
+  function headKey(head) { return head.map(norm).join('\u001f'); }
+  function loadCols(storage, head) {
+    try { var all = JSON.parse(storage.getItem(COLS_KEY) || '[]'); var k = headKey(head); var hit = all.filter(function (e) { return e && e.k === k; })[0]; return hit ? hit.c : null; } catch (e) { return null; }
+  }
+  function saveCols(storage, head, cols) {
+    try {
+      var k = headKey(head), all = JSON.parse(storage.getItem(COLS_KEY) || '[]');
+      if (!Array.isArray(all)) all = [];
+      all = all.filter(function (e) { return e && e.k !== k; });
+      all.unshift({ k: k, c: { date: cols.date, amount: cols.amount, item: cols.item, qty: cols.qty } });
+      storage.setItem(COLS_KEY, JSON.stringify(all.slice(0, 10)));
+    } catch (e) { }
+  }
+
+  // 見本のデータ（架空の「カフェ みほん」。乱数ではなく決まった式で作る）
+  function sampleCsv() {
+    var menu = [['ブレンドコーヒー', 480], ['カフェラテ', 550], ['ホットサンド', 780], ['季節のケーキ', 620], ['クッキー缶', 1800], ['紅茶', 500]];
+    var w = [30, 26, 16, 14, 4, 10];
+    var seed = 20261028;
+    function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+    function pick() { var t = rnd() * 100, s = 0; for (var i = 0; i < w.length; i++) { s += w[i]; if (t < s) return i; } return 0; }
+    var lines = ['売上日時,商品名,数量,税込金額'];
+    [[2026, 9, 30], [2026, 10, 27]].forEach(function (p) {
+      for (var d = 1; d <= p[2]; d++) {
+        var wdn = weekday(p[0], p[1], d);
+        if (wdn === 1) continue; // 月曜は定休
+        var base = wdn === 0 || wdn === 6 ? 40 : 24;
+        if (isHoliday(p[0], p[1], d)) base = 38;
+        var n = Math.round((base + rnd() * 6) * (p[1] === 10 ? 1.18 : 1));
+        for (var k = 0; k < n; k++) {
+          var it = menu[pick()], q = rnd() < 0.15 ? 2 : 1;
+          var mins = 600 + Math.floor(k * (480 / n));
+          lines.push(p[0] + '/' + pad2(p[1]) + '/' + pad2(d) + ' ' + pad2(Math.floor(mins / 60)) + ':' + pad2(mins % 60) + ',' + it[0] + ',' + q + ',' + it[1] * q);
+        }
+      }
+    });
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  // iPhone・iPad（iPadOSのSafariはMacと名乗るので、タッチ点の数でも見る）
+  function isIOS(ua, touchPoints) { return /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && touchPoints > 1); }
+
+  return {
+    COLS_KEY: COLS_KEY, MAX_ROWS: MAX_ROWS, MAX_BYTES: MAX_BYTES, WD: WD,
+    isHoliday: isHoliday, daysIn: daysIn, weekday: weekday, decodeBytes: decodeBytes, detectDelim: detectDelim, parseTable: parseTable,
+    parseDate: parseDate, parseAmount: parseAmount, looksLikeHeader: looksLikeHeader, guessColumns: guessColumns, toRecords: toRecords,
+    months: months, monthStats: monthStats, yen: yen, signed: signed, pctText: pctText, dayLabel: dayLabel, axisYen: axisYen, niceScale: niceScale, prevRuns: prevRuns,
+    headKey: headKey, loadCols: loadCols, saveCols: saveCols, sampleCsv: sampleCsv, isIOS: isIOS
+  };
+})();
+if (typeof module !== 'undefined') module.exports = SB;
+</script>
+
+<script id="ui">
+(function () {
+  var app = document.getElementById('app');
+  var state = { rows: null, hasHeader: true, cols: null, data: null, monthIdx: -1, source: '', encoding: '', sel: 0 };
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === 'text') e.textContent = attrs[k];
+      else if (k === 'class') e.className = attrs[k];
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), attrs[k]);
+      else if (attrs[k] === true) e.setAttribute(k, '');
+      else if (attrs[k] !== false && attrs[k] != null) e.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return e;
+  }
+  function sv(tag, attrs, text) {
+    var e = document.createElementNS(SVGNS, tag);
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  // ---------- 読み込み ----------
+  var loadPanel = el('section', { class: 'panel', 'aria-labelledby': 'h-load' });
+  var errBox = el('div', { class: 'errors', role: 'alert', hidden: true });
+  var statusLine = el('p', { class: 'status', 'aria-live': 'polite' });
+  var fileInput = el('input', { type: 'file', accept: '.csv,.txt,.tsv,text/csv,text/plain', onchange: onFile });
+  var pasteArea = el('textarea', { id: 'paste', rows: '5', placeholder: '例）\n日付\t商品\t金額\n2026/10/01\tカフェラテ\t550', 'aria-label': '貼り付ける表' });
+  loadPanel.appendChild(el('h2', { id: 'h-load', text: '1. 売上のCSVを読み込む' }));
+  loadPanel.appendChild(el('div', { class: 'notice' }, ['CSVはこのページの中だけで読みます。保存も送信もしません。日付の列と金額の列がある表なら読めます（読めるかどうかはCSVの形によります）。']));
+  loadPanel.appendChild(errBox);
+  loadPanel.appendChild(el('div', { class: 'btns' }, [
+    el('label', { class: 'filebtn' }, [fileInput, el('span', { text: 'CSVファイルを選ぶ' })]),
+    el('button', { type: 'button', text: '見本のデータで試す', onclick: function () { loadText(SB.sampleCsv(), '見本のデータ（架空の「カフェ みほん」）', ''); } })
+  ]));
+  loadPanel.appendChild(el('details', { class: 'paste' }, [
+    el('summary', { text: 'Excelやスプレッドシートの表を貼り付ける' }),
+    el('label', { class: 'f', for: 'paste', text: '表をコピーして、ここに貼り付けてください' }),
+    pasteArea,
+    el('button', { type: 'button', class: 'primary', text: '貼った表を読む', onclick: function () {
+      if (!pasteArea.value.trim()) { showErr(['表が貼り付けられていません']); return; }
+      loadText(pasteArea.value, '貼り付けた表', '');
+    } })
+  ]));
+  loadPanel.appendChild(statusLine);
+  app.appendChild(loadPanel);
+
+  var colsBox = el('div');
+  loadPanel.appendChild(colsBox);
+  var board = el('div', { id: 'board' });
+  app.appendChild(board);
+
+  function showErr(list) {
+    errBox.textContent = '';
+    if (!list || !list.length) { errBox.hidden = true; return; }
+    errBox.appendChild(el('strong', { text: '読み込めませんでした' }));
+    errBox.appendChild(el('ul', null, list.map(function (t) { return el('li', { text: t }); })));
+    errBox.hidden = false;
+  }
+
+  function onFile() {
+    var f = fileInput.files && fileInput.files[0];
+    if (!f) return;
+    if (f.size > SB.MAX_BYTES) { showErr(['ファイルが大きすぎます（10MBまで）']); fileInput.value = ''; return; }
+    var fr = new FileReader();
+    fr.onload = function () {
+      var dec = SB.decodeBytes(new Uint8Array(fr.result));
+      loadText(dec.text, 'ファイル「' + f.name + '」', dec.encoding);
+      fileInput.value = '';
+    };
+    fr.onerror = function () { showErr(['ファイルを開けませんでした']); };
+    fr.readAsArrayBuffer(f);
+  }
+
+  function loadText(text, source, encoding) {
+    showErr(null);
+    var t = SB.parseTable(text);
+    if (!t.rows.length) { showErr(['中身が空です']); return; }
+    state.rows = t.rows; state.source = source; state.encoding = encoding;
+    state.hasHeader = SB.looksLikeHeader(t.rows[0]);
+    state.cols = SB.guessColumns(t.rows, state.hasHeader);
+    if (state.hasHeader) {
+      var saved = SB.loadCols(localStorage, t.rows[0]);
+      if (saved && [saved.date, saved.amount, saved.item, saved.qty].every(function (v) { return typeof v === 'number' && v >= -1 && v < state.cols.width; })) {
+        state.cols.date = saved.date; state.cols.amount = saved.amount; state.cols.item = saved.item; state.cols.qty = saved.qty;
+      }
+    }
+    state.monthIdx = -1;
+    rebuild(true);
+  }
+
+  function colName(i) {
+    if (i < 0) return '使わない';
+    var h = state.hasHeader ? String(state.rows[0][i] || '').trim() : '';
+    return h ? h : '列' + (i + 1);
+  }
+
+  function renderCols() {
+    colsBox.textContent = '';
+    if (!state.rows) return;
+    var c = state.cols;
+    var sum = '日付: ' + (c.date >= 0 ? colName(c.date) : '（未選択）') + '／金額: ' + (c.amount >= 0 ? colName(c.amount) : '（未選択）') +
+      (c.item >= 0 ? '／品目: ' + colName(c.item) : '');
+    var det = el('details', { class: 'cols' });
+    det.open = c.date < 0 || c.amount < 0;
+    det.appendChild(el('summary', { text: '使っている列: ' + sum }));
+    function sel(label, key, optional) {
+      var id = 'col-' + key;
+      var s = el('select', { id: id, onchange: function () { state.cols[key] = +s.value; if (state.hasHeader) SB.saveCols(localStorage, state.rows[0], state.cols); rebuild(false); } });
+      if (optional || c[key] < 0) s.appendChild(el('option', { value: '-1', text: optional ? '使わない' : '選んでください' }));
+      for (var i = 0; i < c.width; i++) s.appendChild(el('option', { value: String(i), text: colName(i) }));
+      s.value = String(c[key]);
+      return el('div', null, [el('label', { class: 'f', for: id, text: label }), s]);
+    }
+    var hb = el('input', { type: 'checkbox', id: 'hashead', onchange: function () {
+      state.hasHeader = hb.checked; state.cols = SB.guessColumns(state.rows, state.hasHeader); rebuild(false);
+    } });
+    hb.checked = state.hasHeader;
+    det.appendChild(el('label', { class: 'chk', for: 'hashead' }, [hb, el('span', { text: '1行目は見出し（列の名前）' })]));
+    det.appendChild(el('div', { class: 'cols-grid' }, [sel('日付の列', 'date'), sel('金額の列', 'amount'), sel('品目の列（あれば）', 'item', true), sel('数量の列（あれば）', 'qty', true)]));
+    det.appendChild(el('p', { class: 'small', text: '合計の行と明細の行が混ざっているCSVは、金額が二重に足されます。金額はCSVの値をそのまま足します（税込・税抜は見分けません）。' }));
+    colsBox.appendChild(det);
+  }
+
+  function rebuild(resetMonth) {
+    renderCols();
+    board.textContent = '';
+    var c = state.cols;
+    if (c.date < 0 || c.amount < 0) {
+      statusLine.textContent = state.source + 'を読みました。日付と金額の列を選んでください。';
+      return;
+    }
+    state.data = SB.toRecords(state.rows, state.hasHeader, c);
+    var d = state.data;
+    var ms = SB.months(d.recs);
+    statusLine.textContent = state.source + 'を読みました（' + d.total.toLocaleString('ja-JP') + '行' + (state.encoding ? '・文字コード ' + state.encoding : '') + '）';
+    if (!ms.length) { board.appendChild(el('div', { class: 'errors', role: 'alert' }, ['日付と金額が読める行がありませんでした。列の選び方を確かめてください。'])); return; }
+    state.months = ms;
+    if (resetMonth || state.monthIdx < 0 || state.monthIdx >= ms.length) state.monthIdx = ms.length - 1;
+    renderBoard();
+  }
+
+  // ---------- ボード ----------
+  var lastStats = null;
+  function renderBoard() {
+    board.textContent = '';
+    var ms = state.months, idx = state.monthIdx, ym = ms[idx];
+    var st = SB.monthStats(state.data.recs, ym[0], ym[1], idx === ms.length - 1);
+    lastStats = st;
+    state.sel = st.best;
+    var sec = el('section', { class: 'panel', 'aria-labelledby': 'h-month' });
+    var prevB = el('button', { type: 'button', text: '◀ 前の月', 'aria-label': '前の月', onclick: function () { state.monthIdx--; renderBoard(); focusNav('prev'); } });
+    var nextB = el('button', { type: 'button', text: '次の月 ▶', 'aria-label': '次の月', onclick: function () { state.monthIdx++; renderBoard(); focusNav('next'); } });
+    prevB.disabled = idx <= 0; nextB.disabled = idx >= ms.length - 1;
+    prevB.dataset.nav = 'prev'; nextB.dataset.nav = 'next';
+    var sub = st.partial ? '1〜' + st.lastDay + '日（データのある日まで）' : '1か月分';
+    sec.appendChild(el('div', { class: 'monthbar' }, [prevB, el('h2', { id: 'h-month' }, [st.y + '年' + st.m + '月', el('small', { text: sub })]), nextB]));
+
+    // 数字のカード
+    var cmpK, cmpV, cmpS;
+    if (!st.prevExists) { cmpK = '先月と比べて'; cmpV = '—'; cmpS = '先月のデータがありません'; }
+    else {
+      cmpK = st.partial ? '先月の1〜' + st.prevUpto + '日と比べて' : '先月（' + st.prevM + '月）と比べて';
+      cmpV = SB.signed(st.diff);
+      cmpS = st.pct === null ? '先月は0円' : SB.pctText(st.pct) + '（先月 ' + SB.yen(st.prevTotal) + '）';
+    }
+    var cards = el('div', { class: 'cards' }, [
+      card('今月の合計', SB.yen(st.total), '売上のあった日 ' + st.salesDays + '日'),
+      card(cmpK, cmpV, cmpS, 'cmp'),
+      card('1日あたり', SB.yen(st.perDay), st.prevExists && st.prevDaysN ? '先月 ' + SB.yen(st.prevPerDay) + '（' + st.prevDaysN + '日）' : '売上のあった日で割った額'),
+      card('一番売れた日', st.best ? SB.yen(st.bestAmt) : '—', st.best ? SB.dayLabel(st.y, st.m, st.best) : '', 'mid')
+    ]);
+    sec.appendChild(cards);
+
+    // 日ごとのグラフ
+    sec.appendChild(el('h2', { id: 'h-days', text: '日ごとの売上' }));
+    var tip = el('p', { class: 'tip-line', 'aria-live': 'polite' });
+    var wrap = el('div', { class: 'chart-wrap' });
+    sec.appendChild(tip);
+    sec.appendChild(wrap);
+    sec.appendChild(el('div', { class: 'legend' }, [
+      el('span', null, [el('i', { class: 'lg-bar' }), '今月']),
+      st.prevExists ? el('span', null, [el('i', { class: 'lg-prev' }), '先月の同じ日']) : null,
+      el('span', null, [el('i', { class: 'lg-wk' }), '土日祝']),
+      el('span', { class: 'small', text: '棒を押すと金額が出ます' })
+    ]));
+    var note = [];
+    if (SB.isHoliday(st.y, st.m, 1) === null) note.push(st.y + '年の祝日は判定していません（2025〜2027年だけ）');
+    if (state.data.bad) note.push('日付か金額が読めなかった行: ' + state.data.bad.toLocaleString('ja-JP') + '行（集計に入れていません）');
+    if (state.data.neg) note.push('マイナスの金額の行が' + state.data.neg.toLocaleString('ja-JP') + '行あります（返品・取消などの可能性。そのまま足しています）');
+    if (state.data.truncated) note.push('行が多いため、先頭から' + SB.MAX_ROWS.toLocaleString('ja-JP') + '行だけを集計しています');
+    note.forEach(function (t) { sec.appendChild(el('p', { class: 'warn', text: '※ ' + t })); });
+    sec.appendChild(dayTableEl(st));
+    board.appendChild(sec);
+
+    var lower = el('div', { class: 'lower' });
+    lower.appendChild(weekdayPanel(st));
+    if (st.items) lower.appendChild(itemsPanel(st));
+    board.appendChild(lower);
+
+    board.appendChild(savePanel());
+    drawDays(wrap, tip, st);
+    showTip(tip, st, st.best);
+    fitValues();
+  }
+  // 桁の多い金額がカードからはみ出すときは、文字を小さくして1行に収める
+  function fitValues() {
+    board.querySelectorAll('.card .v').forEach(function (v) {
+      v.style.fontSize = '';
+      var size = parseFloat(getComputedStyle(v).fontSize);
+      while (v.scrollWidth > v.clientWidth + 0.5 && size > 13) { size -= 1; v.style.fontSize = size + 'px'; }
+    });
+  }
+  function focusNav(which) { var b = board.querySelector('[data-nav="' + which + '"]'); if (b && !b.disabled) b.focus(); else { var o = board.querySelector('[data-nav="' + (which === 'prev' ? 'next' : 'prev') + '"]'); if (o) o.focus(); } }
+
+  function card(k, v, s, mod) {
+    return el('div', { class: 'card' + (mod === 'cmp' ? ' cmp' : '') }, [el('div', { class: 'k', text: k }), el('div', { class: 'v' + (mod === 'mid' ? ' mid' : ''), text: v }), el('div', { class: 's', text: s })]);
+  }
+
+  function showTip(tip, st, d) {
+    if (!d) { tip.textContent = ''; return; }
+    var t = SB.dayLabel(st.y, st.m, d) + ' ' + (st.days.has[d] ? SB.yen(st.days.sum[d]) : '売上なし');
+    if (st.prevExists && d <= st.prevDays.dim) t += '／先月' + d + '日 ' + (st.prevDays.has[d] ? SB.yen(st.prevDays.sum[d]) : '売上なし');
+    tip.textContent = t;
+  }
+
+  function drawDays(wrap, tip, st) {
+    wrap.textContent = '';
+    var W = Math.max(280, Math.floor(wrap.clientWidth || 340)), H = W < 500 ? 200 : 240;
+    var padL = 40, padR = 6, padT = 8, padB = 34;
+    var cw = W - padL - padR, ch = H - padT - padB;
+    var maxV = 0, d;
+    for (d = 1; d <= st.dim; d++) maxV = Math.max(maxV, st.days.sum[d]);
+    if (st.prevExists) for (d = 1; d <= st.prevDays.dim; d++) maxV = Math.max(maxV, st.prevDays.sum[d]);
+    var sc = SB.niceScale(maxV), top = sc.top, step = cw / st.dim;
+    var svg = sv('svg', { class: 'chart', viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true', focusable: 'false' });
+    for (var g = 0; g <= sc.n; g++) {
+      var gy = padT + ch - ch * g / sc.n;
+      svg.appendChild(sv('line', { class: 'grid', x1: padL, x2: W - padR, y1: gy, y2: gy }));
+      svg.appendChild(sv('text', { class: 'axis', x: padL - 5, y: gy + 4, 'text-anchor': 'end' }, SB.axisYen(sc.step * g)));
+    }
+    var bw = Math.max(2, step * 0.68), bars = [];
+    for (d = 1; d <= st.dim; d++) {
+      var v = Math.max(0, st.days.sum[d]), bh = ch * v / top, x = padL + step * (d - 1) + (step - bw) / 2;
+      var bar = sv('rect', { class: 'bar' + (d === st.best ? ' sel' : ''), x: x.toFixed(2), y: (padT + ch - bh).toFixed(2), width: bw.toFixed(2), height: bh.toFixed(2), rx: Math.min(2, bw / 3) });
+      bars[d] = bar; svg.appendChild(bar);
+      var wd = SB.weekday(st.y, st.m, d);
+      if (wd === 0 || wd === 6 || SB.isHoliday(st.y, st.m, d)) svg.appendChild(sv('circle', { class: 'wk', cx: (padL + step * (d - 0.5)).toFixed(2), cy: padT + ch + 6, r: 2.4 }));
+      if (d === 1 || d % 5 === 0 && st.dim - d >= 3 || d === st.dim) svg.appendChild(sv('text', { class: 'axis', x: (padL + step * (d - 0.5)).toFixed(2), y: H - 6, 'text-anchor': 'middle' }, String(d)));
+    }
+    if (st.prevExists) {
+      SB.prevRuns(st.prevDays, Math.min(st.prevDays.dim, st.dim)).forEach(function (run) {
+        var pts = run.map(function (dd) { return [(padL + step * (dd - 0.5)).toFixed(2), (padT + ch - ch * Math.max(0, st.prevDays.sum[dd]) / top).toFixed(2)]; });
+        if (pts.length === 1) svg.appendChild(sv('circle', { class: 'prev-dot', cx: pts[0][0], cy: pts[0][1], r: 2.6 }));
+        else svg.appendChild(sv('polyline', { class: 'prev', points: pts.map(function (q) { return q.join(','); }).join(' ') }));
+      });
+    }
+    for (d = 1; d <= st.dim; d++) (function (dd) {
+      var hit = sv('rect', { class: 'hit', x: (padL + step * (dd - 1)).toFixed(2), y: padT, width: step.toFixed(2), height: ch + 14 });
+      hit.addEventListener('click', function () {
+        bars.forEach(function (b, i) { if (b) b.setAttribute('class', 'bar' + (i === dd ? ' sel' : '')); });
+        showTip(tip, st, dd);
+      });
+      svg.appendChild(hit);
+    })(d);
+    wrap.appendChild(svg);
+  }
+
+  function dayTableEl(st) {
+    var rows = [];
+    for (var d = 1; d <= st.dim; d++) {
+      if (st.partial && d > st.lastDay) break;
+      rows.push(el('tr', null, [el('td', { text: SB.dayLabel(st.y, st.m, d) }), el('td', { text: st.days.has[d] ? SB.yen(st.days.sum[d]) : '—' }),
+        st.prevExists ? el('td', { text: d <= st.prevDays.dim && st.prevDays.has[d] ? SB.yen(st.prevDays.sum[d]) : '—' }) : null]));
+    }
+    return el('details', { class: 'tbl' }, [
+      el('summary', { text: '日ごとの売上を表で見る' }),
+      el('div', { class: 'tbl-scroll' }, [el('table', { class: 'data' }, [
+        el('thead', null, [el('tr', null, [el('th', { scope: 'col', text: '日付' }), el('th', { scope: 'col', text: '今月' }), st.prevExists ? el('th', { scope: 'col', text: '先月の同じ日' }) : null])]),
+        el('tbody', null, rows)
+      ])])
+    ]);
+  }
+
+  function weekdayPanel(st) {
+    var order = [1, 2, 3, 4, 5, 6, 0];
+    var max = Math.max.apply(null, st.weekdays.map(function (o) { return o.avg; }).concat([1]));
+    var list = el('ul', { class: 'hbars' }, order.map(function (w) {
+      var o = st.weekdays[w];
+      return el('li', null, [
+        el('span', { class: 'lb' }, [SB.WD[w] + '曜', el('small', { text: o.days ? o.days + '日' : '売上なし' })]),
+        el('span', { class: 'track' }, [o.days ? el('span', { class: 'fill', style: 'width:' + Math.max(1, o.avg / max * 62).toFixed(1) + '%' }) : null, el('span', { class: 'num', text: o.days ? SB.yen(o.avg) : '—' })])
+      ]);
+    }));
+    return el('section', { class: 'panel', 'aria-labelledby': 'h-wd' }, [
+      el('h2', { id: 'h-wd', text: '曜日ごとの1日平均' }),
+      el('p', { class: 'small', text: 'その曜日の合計を、その曜日で売上のあった日数で割った額（祝日もその曜日に入れています）' }),
+      list
+    ]);
+  }
+
+  function itemsPanel(st) {
+    var max = st.items.length ? Math.max(1, st.items[0].total) : 1;
+    var list = el('ol', { class: 'hbars items' }, st.items.length ? st.items.map(function (it, i) {
+      return el('li', null, [
+        el('span', { class: 'lb', text: (i + 1) + '. ' + it.name }),
+        el('span', { class: 'track' }, [el('span', { class: 'fill', style: 'width:' + Math.max(1, Math.max(0, it.total) / max * 62).toFixed(1) + '%' }),
+          el('span', { class: 'num', text: SB.yen(it.total) + (st.hasQty ? '・' + Math.round(it.q).toLocaleString('ja-JP') + '個' : '') })])
+      ]);
+    }) : [el('li', { class: 'none', text: 'この月の品目はありません' })]);
+    return el('section', { class: 'panel', 'aria-labelledby': 'h-items' }, [el('h2', { id: 'h-items', text: 'よく売れた物（金額の多い順）' }), list]);
+  }
+
+  // ---------- 画像で保存 ----------
+  function savePanel() {
+    var out = el('div', { class: 'saved', 'aria-live': 'polite' });
+    return el('section', { class: 'panel', 'aria-labelledby': 'h-save' }, [
+      el('h2', { id: 'h-save', text: '画像で保存' }),
+      el('p', { class: 'small', text: 'この月の数字・日ごとのグラフ・曜日別・よく売れた物を1枚の画像（1080×1350）にします。家族やスタッフに見せるときに使えます。' }),
+      el('div', { class: 'btns' }, [el('button', { type: 'button', class: 'primary', text: '画像で保存', onclick: function () { saveImage(out); } })]),
+      out
+    ]);
+  }
+
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+  function renderPng(st) {
+    var W = 1080, H = 1350, c = document.createElement('canvas'); c.width = W; c.height = H;
+    var x = c.getContext('2d'), F = '"Hiragino Sans","Yu Gothic","BIZ UDPGothic","Noto Sans JP",sans-serif';
+    var C = { bg: '#faf6f3', ink: '#24150f', ink2: '#4a3a33', ink3: '#64544c', line: '#e6dbd5', acc: '#8F3B2A', fill: '#c0634d', prev: '#5c6670', card: '#ffffff' };
+    x.fillStyle = C.bg; x.fillRect(0, 0, W, H);
+    function t(s, px, py, size, color, weight, align) { x.font = (weight || 400) + ' ' + size + 'px ' + F; x.fillStyle = color || C.ink; x.textAlign = align || 'left'; x.textBaseline = 'alphabetic'; x.fillText(s, px, py); }
+    function fit(s, maxW, size, weight) { x.font = (weight || 400) + ' ' + size + 'px ' + F; if (x.measureText(s).width <= maxW) return s; while (s.length > 1 && x.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; }
+    t(st.y + '年' + st.m + '月の売上', 60, 96, 52, C.ink, 800);
+    t(st.partial ? '1〜' + st.lastDay + '日（データのある日まで）' : '1か月分', 60, 140, 28, C.ink3, 400);
+    var cards = [
+      ['今月の合計', SB.yen(st.total), '売上のあった日 ' + st.salesDays + '日'],
+      [st.prevExists ? (st.partial ? '先月の1〜' + st.prevUpto + '日と比べて' : '先月と比べて') : '先月と比べて', st.prevExists ? SB.signed(st.diff) : '—', st.prevExists ? (st.pct === null ? '先月は0円' : SB.pctText(st.pct)) : '先月のデータなし'],
+      ['1日あたり', SB.yen(st.perDay), st.prevExists && st.prevDaysN ? '先月 ' + SB.yen(st.prevPerDay) : ''],
+      ['一番売れた日', st.best ? SB.yen(st.bestAmt) : '—', st.best ? SB.dayLabel(st.y, st.m, st.best) : '']
+    ];
+    cards.forEach(function (cd, i) {
+      var cx = 60 + (i % 2) * 490, cy = 175 + Math.floor(i / 2) * 170;
+      x.fillStyle = C.card; x.strokeStyle = C.line; x.lineWidth = 2; x.beginPath(); x.rect(cx, cy, 470, 150); x.fill(); x.stroke();
+      t(fit(cd[0], 430, 26, 600), cx + 22, cy + 42, 26, C.ink3, 600);
+      t(fit(cd[1], 430, 48, 800), cx + 22, cy + 100, 48, i === 1 ? C.acc : C.ink, 800);
+      t(fit(cd[2], 430, 24), cx + 22, cy + 134, 24, C.ink2);
+    });
+    // 日ごと
+    var gx = 120, gy = 560, gw = 900, gh = 250, d, maxV = 0;
+    t('日ごとの売上', 60, 540, 30, C.ink, 700);
+    for (d = 1; d <= st.dim; d++) maxV = Math.max(maxV, st.days.sum[d]);
+    if (st.prevExists) for (d = 1; d <= st.prevDays.dim; d++) maxV = Math.max(maxV, st.prevDays.sum[d]);
+    var sc = SB.niceScale(maxV), top = sc.top, step = gw / st.dim;
+    for (var g = 0; g <= sc.n; g++) { var yy = gy + gh - gh * g / sc.n; x.strokeStyle = C.line; x.lineWidth = 2; x.beginPath(); x.moveTo(gx, yy); x.lineTo(gx + gw, yy); x.stroke(); t(SB.axisYen(sc.step * g), gx - 10, yy + 8, 22, C.ink3, 400, 'right'); }
+    for (d = 1; d <= st.dim; d++) {
+      var v = Math.max(0, st.days.sum[d]), bh = gh * v / top, bw = step * 0.68;
+      x.fillStyle = d === st.best ? C.acc : C.fill; x.fillRect(gx + step * (d - 1) + (step - bw) / 2, gy + gh - bh, bw, bh);
+      var wd = SB.weekday(st.y, st.m, d);
+      if (wd === 0 || wd === 6 || SB.isHoliday(st.y, st.m, d)) { x.fillStyle = C.ink3; x.beginPath(); x.arc(gx + step * (d - 0.5), gy + gh + 12, 4, 0, Math.PI * 2); x.fill(); }
+      if (d === 1 || d % 5 === 0 && st.dim - d >= 3 || d === st.dim) t(String(d), gx + step * (d - 0.5), gy + gh + 44, 22, C.ink3, 400, 'center');
+    }
+    if (st.prevExists) {
+      x.strokeStyle = C.prev; x.fillStyle = C.prev; x.lineWidth = 3;
+      SB.prevRuns(st.prevDays, Math.min(st.prevDays.dim, st.dim)).forEach(function (run) {
+        var pt = function (dd) { return [gx + step * (dd - 0.5), gy + gh - gh * Math.max(0, st.prevDays.sum[dd]) / top]; };
+        if (run.length === 1) { var q = pt(run[0]); x.beginPath(); x.arc(q[0], q[1], 4, 0, Math.PI * 2); x.fill(); return; }
+        x.setLineDash([10, 8]); x.beginPath();
+        run.forEach(function (dd, i) { var q = pt(dd); if (i) x.lineTo(q[0], q[1]); else x.moveTo(q[0], q[1]); });
+        x.stroke(); x.setLineDash([]);
+      });
+      t('棒＝今月　点線＝先月の同じ日　●＝土日祝', 60, gy + gh + 84, 22, C.ink2);
+    } else t('棒＝今月　●＝土日祝', 60, gy + gh + 84, 22, C.ink2);
+    // 曜日別
+    var by = 960;
+    t('曜日ごとの1日平均', 60, by, 30, C.ink, 700);
+    var order = [1, 2, 3, 4, 5, 6, 0], wmax = Math.max.apply(null, st.weekdays.map(function (o) { return o.avg; }).concat([1]));
+    order.forEach(function (w, i) {
+      var o = st.weekdays[w], ry = by + 22 + i * 46;
+      t(SB.WD[w], 60, ry + 30, 26, C.ink, 700);
+      if (o.days) { x.fillStyle = C.fill; x.fillRect(100, ry + 10, Math.max(3, 230 * o.avg / wmax), 24); }
+      t(o.days ? SB.yen(o.avg) : '—', 100 + (o.days ? Math.max(3, 230 * o.avg / wmax) : 0) + 10, ry + 31, 22, C.ink2);
+    });
+    // よく売れた物
+    if (st.items) {
+      t('よく売れた物', 560, by, 30, C.ink, 700);
+      if (!st.items.length) t('この月の品目はありません', 560, by + 52, 24, C.ink3);
+      st.items.forEach(function (it, i) {
+        var ry = by + 22 + i * 60;
+        t(fit((i + 1) + '. ' + it.name, 460, 26, 600), 560, ry + 30, 26, C.ink, 600);
+        t(SB.yen(it.total) + (st.hasQty ? '・' + Math.round(it.q).toLocaleString('ja-JP') + '個' : ''), 588, ry + 60, 22, C.ink2);
+      });
+    }
+    t('売上CSVで今月をふり返るボード', W - 60, H - 22, 22, C.ink3, 400, 'right');
+    return c;
+  }
+
+  function saveImage(out) {
+    if (!lastStats) return;
+    out.textContent = '';
+    var st = lastStats, canvas = renderPng(st);
+    var url = canvas.toDataURL('image/png');
+    var name = 'sales-' + st.y + '-' + (st.m < 10 ? '0' : '') + st.m + '.png';
+    if (SB.isIOS(navigator.userAgent, navigator.maxTouchPoints || 0)) {
+      // iOSは a.download を無視するので、共有シートで保存する。toBlobは待つ間に操作中と見なされなくなるため、toDataURLで同期的に作る
+      var bin = atob(url.split(',')[1]), arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      var file = new File([arr], name, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch(function (e) { if (!e || e.name !== 'AbortError') showLongPress(out, url); });
+        return;
+      }
+      showLongPress(out, url);
+      return;
+    }
+    var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    out.appendChild(el('p', { class: 'small', text: '画像（' + name + '）を保存しました。' }));
+  }
+  function showLongPress(out, url) {
+    out.appendChild(el('p', { text: '下の画像を長押しして「写真に追加」または「画像を保存」を選んでください。' }));
+    out.appendChild(el('img', { src: url, alt: '保存用の画像（この月の売上のまとめ）', width: '432', height: '540' }));
+  }
+
+  var rt = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(rt);
+    rt = setTimeout(function () {
+      var wrap = board.querySelector('.chart-wrap'), tip = board.querySelector('.tip-line');
+      if (wrap && lastStats) { drawDays(wrap, tip, lastStats); showTip(tip, lastStats, lastStats.best); fitValues(); }
+    }, 150);
+  });
+  window.SBUI = { loadText: loadText, renderPng: function () { return lastStats ? renderPng(lastStats) : null; } };
+})();
+</script>
+</body>
+</html>
