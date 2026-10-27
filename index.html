@@ -9,14 +9,14 @@
   :root {
     --bg: #faf6f3; --surface: #ffffff; --ink: #24150f; --ink2: #4a3a33; --ink3: #64544c;
     --line: #e6dbd5; --line-strong: #8a776e; --accent: #8F3B2A; --accent-ink: #ffffff; --accent-soft: #f6e4de; --accent-fill: #c0634d;
-    --prev: #5c6670; --mark: #64544c; --danger: #a8231b; --danger-soft: #fbe9e7; --notice: #f3ece8;
+    --prev: #3f4850; --bar-sel: #8F3B2A; --mark: #64544c; --danger: #a8231b; --danger-soft: #fbe9e7; --notice: #f3ece8;
     --font: "Hiragino Sans","Yu Gothic","BIZ UDPGothic","Noto Sans JP",system-ui,sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #161110; --surface: #211a18; --ink: #f5ebe7; --ink2: #ddcfc9; --ink3: #bfaea7;
       --line: #3d322e; --line-strong: #9c8a82; --accent: #E8957F; --accent-ink: #2a0f08; --accent-soft: #3e2620; --accent-fill: #d8806a;
-      --prev: #b5c0ca; --mark: #bfaea7; --danger: #ff9a92; --danger-soft: #3a1f1c; --notice: #272019;
+      --prev: #c9d3dc; --bar-sel: #ffcdbe; --mark: #bfaea7; --danger: #ff9a92; --danger-soft: #3a1f1c; --notice: #272019;
     }
   }
   * { box-sizing: border-box; }
@@ -68,11 +68,13 @@
   svg.chart .grid { stroke: var(--line); stroke-width: 1; }
   svg.chart .axis { fill: var(--ink3); font-size: 12px; font-family: var(--font); }
   svg.chart .bar { fill: var(--accent-fill); }
-  svg.chart .bar.sel { fill: var(--accent); }
+  svg.chart .bar.sel { fill: var(--bar-sel); stroke: var(--ink); stroke-width: 1.5; }
+  svg.chart .prev-halo { fill: none; stroke: var(--surface); stroke-width: 5; stroke-linejoin: round; stroke-linecap: round; }
   svg.chart .prev { fill: none; stroke: var(--prev); stroke-width: 2; stroke-dasharray: 5 4; }
   svg.chart .prev-dot { fill: var(--prev); }
   svg.chart .wk { fill: var(--mark); }
   svg.chart .hit { fill: transparent; cursor: pointer; }
+  svg.chart { touch-action: pan-y; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink2); margin: 6px 0 0; }
   .legend i { display: inline-block; vertical-align: middle; margin-right: 4px; }
   .lg-bar { width: 12px; height: 12px; background: var(--accent-fill); border-radius: 2px; }
@@ -85,7 +87,7 @@
   .hbars li:last-child { border-bottom: 0; }
   .hbars .lb { font-size: 14px; font-weight: 600; line-height: 1.3; }
   .hbars .lb small { display: block; font-weight: 400; font-size: 12px; color: var(--ink3); }
-  .hbars .track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .hbars .track { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
   .hbars .fill { height: 14px; background: var(--accent-fill); border-radius: 2px; flex: none; min-width: 2px; }
   .hbars .num { font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .hbars.items li { grid-template-columns: minmax(0, 1fr); }
@@ -125,7 +127,7 @@
 
 <script id="core">
 var SB = (function () {
-  var COLS_KEY = 'sales-month-board-cols-v1';
+  var COLS_KEY = 'sales-month-board-cols-v2', OLD_KEYS = ['sales-month-board-cols-v1'];
   var MAX_ROWS = 50000, MAX_BYTES = 10 * 1024 * 1024;
   var WD = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -166,7 +168,8 @@ var SB = (function () {
   }
 
   // CSV／TSVを行の配列に（引用符の中のカンマ・改行・""に対応）。空の行は捨てる
-  function parseTable(text, delim) {
+  // 引用符が最後まで閉じていなければ、引用符を普通の文字として読み直す（unclosed: true）
+  function parseTable(text, delim, literal) {
     delim = delim || detectDelim(text);
     var rows = [], row = [], cell = '', inQ = false, i = 0, n = text.length, c;
     function endCell() { row.push(cell); cell = ''; }
@@ -176,14 +179,15 @@ var SB = (function () {
       if (inQ) {
         if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else inQ = false; }
         else cell += c;
-      } else if (c === '"' && cell.trim() === '') { cell = ''; inQ = true; }
+      } else if (!literal && c === '"' && cell.trim() === '') { cell = ''; inQ = true; }
       else if (c === delim) endCell();
       else if (c === '\r') { if (text[i + 1] === '\n') i++; endRow(); }
       else if (c === '\n') endRow();
       else cell += c;
     }
+    if (inQ) { var again = parseTable(text, delim, true); again.unclosed = true; return again; }
     if (cell !== '' || row.length) endRow();
-    return { rows: rows, delim: delim };
+    return { rows: rows, delim: delim, unclosed: false };
   }
 
   function norm(s) { return String(s == null ? '' : s).normalize('NFKC').trim(); }
@@ -191,9 +195,9 @@ var SB = (function () {
   // 日付。読めたら {y, m, d}、読めなければ null
   function parseDate(s) {
     s = norm(s);
-    var r = /^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:$|[\sT])/.exec(s) ||
+    var r = /^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:$|[\sT(])/.exec(s) ||
       /^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/.exec(s) ||
-      /^(\d{4})(\d{2})(\d{2})(?:$|[\sT])/.exec(s);
+      /^(\d{4})(\d{2})(\d{2})(?:$|[\sT(])/.exec(s);
     if (!r) return null;
     var y = +r[1], m = +r[2], d = +r[3];
     if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > daysIn(y, m)) return null;
@@ -216,16 +220,25 @@ var SB = (function () {
 
   var KW = {
     date: /日付|日時|売上日|注文日|会計日|取引日|販売日|年月日|date|day/i,
-    amountTop: /合計|税込|total/i,
+    amountTop: /合計|税込|(^|[^a-z])total/i,
     amount: /金額|売上|売り上げ|代金|小計|価格|amount|price|sales/i,
-    notAmount: /番号|no\.?$|^no|id$|^id|コード|code|数量|個数|点数|qty|quantity|電話|郵便|〒|率|%|ポイント|point|年齢|時間|時刻|time/i,
+    notAmount: /番号|(^|[^a-z])no\.?$|^no[\s_.]|(^|[\s_])id$|^id([\s_]|$)|コード|code|数量|個数|点数|件数|客数|人数|qty|quantity|電話|郵便|〒|率|%|ポイント|point|年齢|時間|時刻|time|単価|預り|預かり|お預|釣|値引|割引|discount|subtotal|税額|^tax( amount)?$|原価|仕入/i,
     item: /商品|品名|品目|メニュー|サービス|コース|item|product|menu/i,
     qty: /数量|個数|点数|qty|quantity/i
   };
 
-  // 1行目が見出しかどうか（日付として読めるセルがあれば、見出しではないとみなす）
+  // 見出しの行かどうか（日付か数として読めるセルがあれば、見出しではないとみなす）
   function looksLikeHeader(row) {
-    return !row.some(function (c) { return parseDate(c); }) && row.some(function (c) { return parseAmount(c) === null && norm(c) !== ''; });
+    return !row.some(function (c) { return parseDate(c) || parseAmount(c) !== null; }) && row.some(function (c) { return norm(c) !== ''; });
+  }
+
+  // 先頭に題名や期間の行があるCSVのため、日付が読める最初の行を探し、その1行上を見出しの候補にする
+  function prepare(rows) {
+    var f = -1, i;
+    for (i = 0; i < Math.min(rows.length, 50); i++) if (rows[i].some(function (c) { return parseDate(c); })) { f = i; break; }
+    if (f < 0) return { rows: rows, hasHeader: looksLikeHeader(rows[0]), skipped: 0 };
+    if (f >= 1 && looksLikeHeader(rows[f - 1])) return { rows: rows.slice(f - 1), hasHeader: true, skipped: f - 1 };
+    return { rows: rows.slice(f), hasHeader: false, skipped: f };
   }
 
   // 列の推測
@@ -234,14 +247,16 @@ var SB = (function () {
     var width = rows.reduce(function (a, r) { return Math.max(a, r.length); }, 0);
     var st = [], i;
     for (i = 0; i < width; i++) {
-      var filled = 0, dates = 0, nums = 0, abs = 0;
+      var filled = 0, dates = 0, nums = 0, abs = 0, idLike = 0;
       body.forEach(function (r) {
         var v = r[i]; if (v == null || norm(v) === '') return;
         filled++; if (parseDate(v)) dates++;
         var a = parseAmount(v); if (a !== null) { nums++; abs += Math.abs(a); }
+        // 先頭が0の数字・8桁以上の区切りのない数字は、電話番号・伝票番号・商品コードとみなす
+        if (/^(0\d+|\d{8,})$/.test(norm(v))) idLike++;
       });
       var h = norm(head[i] || '');
-      st.push({ i: i, h: h, dateR: filled ? dates / filled : 0, numR: filled ? nums / filled : 0, mean: nums ? abs / nums : 0, filled: filled });
+      st.push({ i: i, h: h, dateR: filled ? dates / filled : 0, numR: filled ? nums / filled : 0, mean: nums ? abs / nums : 0, filled: filled, idR: nums ? idLike / nums : 0 });
     }
     function best(list, score) {
       var top = null, ts = -Infinity;
@@ -251,17 +266,16 @@ var SB = (function () {
     // 見出しの言葉が合う列は、読める値が5割以上あれば候補にする（読めない行が少し混ざるCSVのため）
     var dateCands = st.filter(function (c) { return c.filled && (c.dateR >= 0.8 || KW.date.test(c.h) && c.dateR >= 0.5); });
     var dateCol = best(dateCands, function (c) { return (KW.date.test(c.h) ? 10 : 0) - c.i * 0.01; });
-    var amtCands = st.filter(function (c) { return c.filled && (c.numR >= 0.8 || (KW.amount.test(c.h) || KW.amountTop.test(c.h)) && c.numR >= 0.5) && (!dateCol || c.i !== dateCol.i) && !KW.notAmount.test(c.h); });
-    var amtCol = best(amtCands, function (c) {
-      var s = 0;
-      if (KW.amountTop.test(c.h) && KW.amount.test(c.h)) s = 30; else if (KW.amountTop.test(c.h)) s = 25; else if (KW.amount.test(c.h)) s = 20;
-      return s + Math.log(1 + c.mean) / 100 + c.i * 0.0001;
-    });
+    var amtCands = st.filter(function (c) { return c.filled && (c.numR >= 0.8 || (KW.amount.test(c.h) || KW.amountTop.test(c.h)) && c.numR >= 0.5) && (!dateCol || c.i !== dateCol.i) && !KW.notAmount.test(c.h) && c.idR < 0.8; });
+    function amtScore(c) { return KW.amountTop.test(c.h) && KW.amount.test(c.h) ? 30 : KW.amountTop.test(c.h) ? 25 : KW.amount.test(c.h) ? 20 : 0; }
+    var amtCol = best(amtCands, function (c) { return amtScore(c) + Math.log(1 + c.mean) / 100 + c.i * 0.0001; });
     var itemCol = hasHeader ? best(st.filter(function (c) { return KW.item.test(c.h) && c.numR < 0.5 && (!dateCol || c.i !== dateCol.i); }), function (c) { return -c.i; }) : null;
     var qtyCol = hasHeader ? best(st.filter(function (c) { return KW.qty.test(c.h) && c.numR >= 0.8 && (!amtCol || c.i !== amtCol.i); }), function (c) { return -c.i; }) : null;
     return {
       date: dateCol ? dateCol.i : -1, amount: amtCol ? amtCol.i : -1,
-      item: itemCol ? itemCol.i : -1, qty: qtyCol ? qtyCol.i : -1, width: width
+      item: itemCol ? itemCol.i : -1, qty: qtyCol ? qtyCol.i : -1, width: width,
+      // 見出しの言葉で金額の列が決まったか（決まらず中身から選んだときは、画面で確かめてもらう）
+      sure: !!(amtCol && amtScore(amtCol) > 0 && dateCol)
     };
   }
 
@@ -296,16 +310,25 @@ var SB = (function () {
   }
 
   // 1か月の集計
-  function monthStats(recs, y, m, latest) {
+  // opt: { latest: データの中で一番新しい月か, today: {y, m}（端末の今日）, truncated: 行を打ち切ったか }（真偽値なら latest だけ）
+  function monthStats(recs, y, m, opt) {
+    if (typeof opt !== 'object' || !opt) opt = { latest: !!opt };
     var cur = dayTable(recs, y, m), pv = prevYm(y, m), prev = dayTable(recs, pv[0], pv[1]);
     var lastDay = 0, d;
     for (d = 1; d <= cur.dim; d++) if (cur.has[d]) lastDay = d;
-    var partial = !!latest && lastDay < cur.dim;
+    // 「途中の月」は、一番新しい月で、末日まで売上が無く、まだ終わっていない月だけ（過去の月の末日が定休日でも月全体で比べる）
+    var notOver = !opt.today || ymKey(y, m) >= ymKey(opt.today.y, opt.today.m);
+    var partial = !!opt.latest && !opt.truncated && lastDay < cur.dim && notOver;
     var upto = partial ? lastDay : cur.dim;
     var prevUpto = partial ? Math.min(lastDay, prev.dim) : prev.dim;
     function range(t, to) { var s = 0, n = 0; for (var k = 1; k <= to; k++) if (t.has[k]) { s += t.sum[k]; n++; } return { total: s, days: n }; }
     var c = range(cur, cur.dim), pr = range(prev, prevUpto);
     var prevExists = prev.has.some(Boolean);
+    // 前の月のデータが途中の日から始まっているときは、比べない（1日から無いのに比べると増減が大きく出る）
+    var first = null;
+    recs.forEach(function (r) { var k = ymKey(r.y, r.m) * 100 + r.d; if (first === null || k < first) first = k; });
+    var prevFrom = prevExists && first !== null && Math.floor(first / 100) === ymKey(pv[0], pv[1]) && first % 100 > 1 ? first % 100 : 0;
+    var cmp = !prevExists ? 'none' : prevFrom ? 'start' : pr.total > 0 ? 'ok' : pr.total === 0 ? 'zero' : 'neg';
     var best = 0;
     for (d = 1; d <= cur.dim; d++) if (cur.has[d] && (!best || cur.sum[d] > cur.sum[best])) best = d;
     var wd = [0, 1, 2, 3, 4, 5, 6].map(function (w) { return { w: w, total: 0, days: 0 }; });
@@ -313,13 +336,13 @@ var SB = (function () {
     wd.forEach(function (o) { o.avg = o.days ? o.total / o.days : 0; });
     var items = null;
     if (recs.length && recs[0].item !== undefined) {
-      var map = {};
+      var map = new Map();
       recs.forEach(function (r) {
         if (r.y !== y || r.m !== m) return;
-        var e = map[r.item] || (map[r.item] = { name: r.item, total: 0, q: 0 });
+        var e = map.get(r.item); if (!e) map.set(r.item, e = { name: r.item, total: 0, q: 0 });
         e.total += r.a; if (r.q !== undefined) e.q += r.q;
       });
-      items = Object.keys(map).map(function (k) { return map[k]; })
+      items = Array.from(map.values())
         .sort(function (a, b) { return b.total - a.total || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); }).slice(0, 5);
     }
     return {
@@ -327,8 +350,9 @@ var SB = (function () {
       partial: partial, lastDay: lastDay, upto: upto, prevUpto: prevUpto,
       total: c.total, salesDays: c.days, perDay: c.days ? c.total / c.days : 0,
       prevExists: prevExists, prevTotal: pr.total, prevDaysN: pr.days, prevPerDay: pr.days ? pr.total / pr.days : 0,
-      diff: c.total - pr.total, pct: prevExists && pr.total > 0 ? (c.total - pr.total) / pr.total * 100 : null,
-      best: best, bestAmt: best ? cur.sum[best] : 0, weekdays: wd, items: items,
+      cmp: cmp, prevFrom: prevFrom,
+      diff: c.total - pr.total, pct: cmp === 'ok' ? (c.total - pr.total) / pr.total * 100 : null,
+      best: best && cur.sum[best] > 0 ? best : 0, bestAmt: best && cur.sum[best] > 0 ? cur.sum[best] : 0, weekdays: wd, items: items,
       hasQty: recs.length > 0 && recs[0].q !== undefined
     };
   }
@@ -338,7 +362,7 @@ var SB = (function () {
   function signed(n) { var r = Math.round(n); return r === 0 ? '±0円' : (r > 0 ? '＋' : '−') + Math.abs(r).toLocaleString('ja-JP') + '円'; }
   function pctText(p) { if (p === null) return ''; var r = Math.round(p * 10) / 10; return r === 0 ? '±0%' : (r > 0 ? '＋' : '−') + Math.abs(r).toFixed(1) + '%'; }
   function dayLabel(y, m, d) { var h = isHoliday(y, m, d); return m + '月' + d + '日（' + WD[weekday(y, m, d)] + (h ? '・祝' : '') + '）'; }
-  function axisYen(n) { return n >= 10000 ? (Math.round(n / 1000) / 10).toString().replace(/\.0$/, '') + '万' : Math.round(n).toLocaleString('ja-JP'); }
+  function axisYen(n) { if (n >= 1e8) return (Math.round(n / 1e7) / 10).toString().replace(/\.0$/, '') + '億'; return n >= 10000 ? (Math.round(n / 1000) / 10).toString().replace(/\.0$/, '') + '万' : Math.round(n).toLocaleString('ja-JP'); }
   // 目盛り: 4本前後で、1・2・2.5・5の切りのよい刻みにする
   function niceScale(v) {
     if (v <= 0) return { top: 1000, step: 250, n: 4 };
@@ -356,13 +380,18 @@ var SB = (function () {
     return runs;
   }
 
-  // 見出しで列の選び方を覚える（見出しの文字だけを保存。データは保存しない）
-  function headKey(head) { return head.map(norm).join('\u001f'); }
+  // 見出しで列の選び方を覚える。見出しの文字そのものは残さず、ハッシュ（FNV-1a 32bit）と列の数だけを保存する
+  function headKey(head) {
+    var str = head.map(norm).join('\u001f'), h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8) + '-' + head.length;
+  }
   function loadCols(storage, head) {
     try { var all = JSON.parse(storage.getItem(COLS_KEY) || '[]'); var k = headKey(head); var hit = all.filter(function (e) { return e && e.k === k; })[0]; return hit ? hit.c : null; } catch (e) { return null; }
   }
   function saveCols(storage, head, cols) {
     try {
+      OLD_KEYS.forEach(function (k) { if (storage.removeItem) storage.removeItem(k); });
       var k = headKey(head), all = JSON.parse(storage.getItem(COLS_KEY) || '[]');
       if (!Array.isArray(all)) all = [];
       all = all.filter(function (e) { return e && e.k !== k; });
@@ -372,20 +401,24 @@ var SB = (function () {
   }
 
   // 見本のデータ（架空の「カフェ みほん」。乱数ではなく決まった式で作る）
-  function sampleCsv() {
+  // 期間は「今日の前日までの今月」と「まるごとの前の月」。today: {y, m, d}（省略時は端末の今日）
+  function sampleCsv(today) {
+    if (!today) { var n = new Date(); today = { y: n.getFullYear(), m: n.getMonth() + 1, d: n.getDate() }; }
+    var end = new Date(Date.UTC(today.y, today.m - 1, today.d - 1));
+    var ey = end.getUTCFullYear(), em = end.getUTCMonth() + 1, pv = prevYm(ey, em);
     var menu = [['ブレンドコーヒー', 480], ['カフェラテ', 550], ['ホットサンド', 780], ['季節のケーキ', 620], ['クッキー缶', 1800], ['紅茶', 500]];
     var w = [30, 26, 16, 14, 4, 10];
     var seed = 20261028;
     function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
     function pick() { var t = rnd() * 100, s = 0; for (var i = 0; i < w.length; i++) { s += w[i]; if (t < s) return i; } return 0; }
     var lines = ['売上日時,商品名,数量,税込金額'];
-    [[2026, 9, 30], [2026, 10, 27]].forEach(function (p) {
+    [[pv[0], pv[1], daysIn(pv[0], pv[1]), 1], [ey, em, end.getUTCDate(), 1.18]].forEach(function (p) {
       for (var d = 1; d <= p[2]; d++) {
         var wdn = weekday(p[0], p[1], d);
         if (wdn === 1) continue; // 月曜は定休
         var base = wdn === 0 || wdn === 6 ? 40 : 24;
         if (isHoliday(p[0], p[1], d)) base = 38;
-        var n = Math.round((base + rnd() * 6) * (p[1] === 10 ? 1.18 : 1));
+        var n = Math.round((base + rnd() * 6) * p[3]);
         for (var k = 0; k < n; k++) {
           var it = menu[pick()], q = rnd() < 0.15 ? 2 : 1;
           var mins = 600 + Math.floor(k * (480 / n));
@@ -402,7 +435,7 @@ var SB = (function () {
   return {
     COLS_KEY: COLS_KEY, MAX_ROWS: MAX_ROWS, MAX_BYTES: MAX_BYTES, WD: WD,
     isHoliday: isHoliday, daysIn: daysIn, weekday: weekday, decodeBytes: decodeBytes, detectDelim: detectDelim, parseTable: parseTable,
-    parseDate: parseDate, parseAmount: parseAmount, looksLikeHeader: looksLikeHeader, guessColumns: guessColumns, toRecords: toRecords,
+    parseDate: parseDate, parseAmount: parseAmount, looksLikeHeader: looksLikeHeader, prepare: prepare, guessColumns: guessColumns, toRecords: toRecords,
     months: months, monthStats: monthStats, yen: yen, signed: signed, pctText: pctText, dayLabel: dayLabel, axisYen: axisYen, niceScale: niceScale, prevRuns: prevRuns,
     headKey: headKey, loadCols: loadCols, saveCols: saveCols, sampleCsv: sampleCsv, isIOS: isIOS
   };
@@ -442,7 +475,7 @@ if (typeof module !== 'undefined') module.exports = SB;
   var fileInput = el('input', { type: 'file', accept: '.csv,.txt,.tsv,text/csv,text/plain', onchange: onFile });
   var pasteArea = el('textarea', { id: 'paste', rows: '5', placeholder: '例）\n日付\t商品\t金額\n2026/10/01\tカフェラテ\t550', 'aria-label': '貼り付ける表' });
   loadPanel.appendChild(el('h2', { id: 'h-load', text: '1. 売上のCSVを読み込む' }));
-  loadPanel.appendChild(el('div', { class: 'notice' }, ['CSVはこのページの中だけで読みます。保存も送信もしません。日付の列と金額の列がある表なら読めます（読めるかどうかはCSVの形によります）。']));
+  loadPanel.appendChild(el('div', { class: 'notice' }, ['CSVはこのページの中だけで読みます。保存も送信もしません。日付の列と金額の列を探して読みます。外れたら列を選び直せます。']));
   loadPanel.appendChild(errBox);
   loadPanel.appendChild(el('div', { class: 'btns' }, [
     el('label', { class: 'filebtn' }, [fileInput, el('span', { text: 'CSVファイルを選ぶ' })]),
@@ -491,11 +524,12 @@ if (typeof module !== 'undefined') module.exports = SB;
     showErr(null);
     var t = SB.parseTable(text);
     if (!t.rows.length) { showErr(['中身が空です']); return; }
-    state.rows = t.rows; state.source = source; state.encoding = encoding;
-    state.hasHeader = SB.looksLikeHeader(t.rows[0]);
-    state.cols = SB.guessColumns(t.rows, state.hasHeader);
+    var pr = SB.prepare(t.rows);
+    state.rows = pr.rows; state.source = source; state.encoding = encoding; state.skipped = pr.skipped; state.unclosed = t.unclosed;
+    state.hasHeader = pr.hasHeader;
+    state.cols = SB.guessColumns(state.rows, state.hasHeader);
     if (state.hasHeader) {
-      var saved = SB.loadCols(localStorage, t.rows[0]);
+      var saved = SB.loadCols(localStorage, state.rows[0]);
       if (saved && [saved.date, saved.amount, saved.item, saved.qty].every(function (v) { return typeof v === 'number' && v >= -1 && v < state.cols.width; })) {
         state.cols.date = saved.date; state.cols.amount = saved.amount; state.cols.item = saved.item; state.cols.qty = saved.qty;
       }
@@ -517,11 +551,12 @@ if (typeof module !== 'undefined') module.exports = SB;
     var sum = '日付: ' + (c.date >= 0 ? colName(c.date) : '（未選択）') + '／金額: ' + (c.amount >= 0 ? colName(c.amount) : '（未選択）') +
       (c.item >= 0 ? '／品目: ' + colName(c.item) : '');
     var det = el('details', { class: 'cols' });
-    det.open = c.date < 0 || c.amount < 0;
+    det.open = c.date < 0 || c.amount < 0 || !c.sure;
     det.appendChild(el('summary', { text: '使っている列: ' + sum }));
+    if (c.amount >= 0 && !c.sure) det.appendChild(el('p', { class: 'warn', text: '※ 金額の列を、見出しではなく中身から選びました。合っているか確かめてください。' }));
     function sel(label, key, optional) {
       var id = 'col-' + key;
-      var s = el('select', { id: id, onchange: function () { state.cols[key] = +s.value; if (state.hasHeader) SB.saveCols(localStorage, state.rows[0], state.cols); rebuild(false); } });
+      var s = el('select', { id: id, onchange: function () { state.cols[key] = +s.value; state.cols.sure = true; if (state.hasHeader) SB.saveCols(localStorage, state.rows[0], state.cols); rebuild(false); } });
       if (optional || c[key] < 0) s.appendChild(el('option', { value: '-1', text: optional ? '使わない' : '選んでください' }));
       for (var i = 0; i < c.width; i++) s.appendChild(el('option', { value: String(i), text: colName(i) }));
       s.value = String(c[key]);
@@ -560,7 +595,8 @@ if (typeof module !== 'undefined') module.exports = SB;
   function renderBoard() {
     board.textContent = '';
     var ms = state.months, idx = state.monthIdx, ym = ms[idx];
-    var st = SB.monthStats(state.data.recs, ym[0], ym[1], idx === ms.length - 1);
+    var now = new Date();
+    var st = SB.monthStats(state.data.recs, ym[0], ym[1], { latest: idx === ms.length - 1, today: { y: now.getFullYear(), m: now.getMonth() + 1 }, truncated: state.data.truncated });
     lastStats = st;
     state.sel = st.best;
     var sec = el('section', { class: 'panel', 'aria-labelledby': 'h-month' });
@@ -572,17 +608,12 @@ if (typeof module !== 'undefined') module.exports = SB;
     sec.appendChild(el('div', { class: 'monthbar' }, [prevB, el('h2', { id: 'h-month' }, [st.y + '年' + st.m + '月', el('small', { text: sub })]), nextB]));
 
     // 数字のカード
-    var cmpK, cmpV, cmpS;
-    if (!st.prevExists) { cmpK = '先月と比べて'; cmpV = '—'; cmpS = '先月のデータがありません'; }
-    else {
-      cmpK = st.partial ? '先月の1〜' + st.prevUpto + '日と比べて' : '先月（' + st.prevM + '月）と比べて';
-      cmpV = SB.signed(st.diff);
-      cmpS = st.pct === null ? '先月は0円' : SB.pctText(st.pct) + '（先月 ' + SB.yen(st.prevTotal) + '）';
-    }
+    var cm = cmpText(st);
+    var pRange = st.partial ? st.prevM + '月1〜' + st.prevUpto + '日' : st.prevM + '月';
     var cards = el('div', { class: 'cards' }, [
-      card('今月の合計', SB.yen(st.total), '売上のあった日 ' + st.salesDays + '日'),
-      card(cmpK, cmpV, cmpS, 'cmp'),
-      card('1日あたり', SB.yen(st.perDay), st.prevExists && st.prevDaysN ? '先月 ' + SB.yen(st.prevPerDay) + '（' + st.prevDaysN + '日）' : '売上のあった日で割った額'),
+      card(st.m + '月の合計', SB.yen(st.total), '売上のあった日 ' + st.salesDays + '日'),
+      card(cm.k, cm.v, cm.s, 'cmp'),
+      card('1日あたり', SB.yen(st.perDay), st.prevExists && st.prevDaysN && st.cmp !== 'start' ? pRange + ' ' + SB.yen(st.prevPerDay) + '（' + st.prevDaysN + '日）' : '売上のあった日で割った額'),
       card('一番売れた日', st.best ? SB.yen(st.bestAmt) : '—', st.best ? SB.dayLabel(st.y, st.m, st.best) : '', 'mid')
     ]);
     sec.appendChild(cards);
@@ -594,12 +625,14 @@ if (typeof module !== 'undefined') module.exports = SB;
     sec.appendChild(tip);
     sec.appendChild(wrap);
     sec.appendChild(el('div', { class: 'legend' }, [
-      el('span', null, [el('i', { class: 'lg-bar' }), '今月']),
-      st.prevExists ? el('span', null, [el('i', { class: 'lg-prev' }), '先月の同じ日']) : null,
+      el('span', null, [el('i', { class: 'lg-bar' }), st.m + '月']),
+      st.prevExists ? el('span', null, [el('i', { class: 'lg-prev' }), st.prevM + '月の同じ日']) : null,
       el('span', null, [el('i', { class: 'lg-wk' }), '土日祝']),
       el('span', { class: 'small', text: '棒を押すと金額が出ます' })
     ]));
     var note = [];
+    if (state.skipped) note.push('先頭の' + state.skipped + '行は、見出しの前の行として読み飛ばしました');
+    if (state.unclosed) note.push('引用符（"）が閉じていない所があったため、引用符を普通の文字として読みました');
     if (SB.isHoliday(st.y, st.m, 1) === null) note.push(st.y + '年の祝日は判定していません（2025〜2027年だけ）');
     if (state.data.bad) note.push('日付か金額が読めなかった行: ' + state.data.bad.toLocaleString('ja-JP') + '行（集計に入れていません）');
     if (state.data.neg) note.push('マイナスの金額の行が' + state.data.neg.toLocaleString('ja-JP') + '行あります（返品・取消などの可能性。そのまま足しています）');
@@ -623,8 +656,18 @@ if (typeof module !== 'undefined') module.exports = SB;
     board.querySelectorAll('.card .v').forEach(function (v) {
       v.style.fontSize = '';
       var size = parseFloat(getComputedStyle(v).fontSize);
-      while (v.scrollWidth > v.clientWidth + 0.5 && size > 13) { size -= 1; v.style.fontSize = size + 'px'; }
+      while (v.scrollWidth > v.clientWidth + 0.5 && size > 11) { size -= 1; v.style.fontSize = size + 'px'; }
     });
+  }
+  // 前の月との比べ方の文言（画面と画像で同じものを使う）
+  function cmpText(st) {
+    var k = st.partial ? st.prevM + '月の1〜' + st.prevUpto + '日と比べて' : st.prevM + '月と比べて';
+    if (st.cmp === 'none') return { k: k, v: '—', s: st.prevM + '月のデータがありません' };
+    if (st.cmp === 'start') return { k: k, v: '—', s: st.prevM + '月は' + st.prevFrom + '日からのデータしかないため、比べていません' };
+    var v = SB.signed(st.diff);
+    if (st.cmp === 'zero') return { k: k, v: v, s: st.prevM + '月のこの期間は0円' };
+    if (st.cmp === 'neg') return { k: k, v: v, s: st.prevM + '月がマイナスのため、率は出していません' };
+    return { k: k, v: v, s: SB.pctText(st.pct) + '（' + st.prevM + '月 ' + SB.yen(st.prevTotal) + '）' };
   }
   function focusNav(which) { var b = board.querySelector('[data-nav="' + which + '"]'); if (b && !b.disabled) b.focus(); else { var o = board.querySelector('[data-nav="' + (which === 'prev' ? 'next' : 'prev') + '"]'); if (o) o.focus(); } }
 
@@ -635,7 +678,7 @@ if (typeof module !== 'undefined') module.exports = SB;
   function showTip(tip, st, d) {
     if (!d) { tip.textContent = ''; return; }
     var t = SB.dayLabel(st.y, st.m, d) + ' ' + (st.days.has[d] ? SB.yen(st.days.sum[d]) : '売上なし');
-    if (st.prevExists && d <= st.prevDays.dim) t += '／先月' + d + '日 ' + (st.prevDays.has[d] ? SB.yen(st.prevDays.sum[d]) : '売上なし');
+    if (st.prevExists && d <= st.prevDays.dim) t += '／' + st.prevM + '月' + d + '日 ' + (st.prevDays.has[d] ? SB.yen(st.prevDays.sum[d]) : '売上なし');
     tip.textContent = t;
   }
 
@@ -667,17 +710,32 @@ if (typeof module !== 'undefined') module.exports = SB;
       SB.prevRuns(st.prevDays, Math.min(st.prevDays.dim, st.dim)).forEach(function (run) {
         var pts = run.map(function (dd) { return [(padL + step * (dd - 0.5)).toFixed(2), (padT + ch - ch * Math.max(0, st.prevDays.sum[dd]) / top).toFixed(2)]; });
         if (pts.length === 1) svg.appendChild(sv('circle', { class: 'prev-dot', cx: pts[0][0], cy: pts[0][1], r: 2.6 }));
-        else svg.appendChild(sv('polyline', { class: 'prev', points: pts.map(function (q) { return q.join(','); }).join(' ') }));
+        else {
+          var pl = pts.map(function (q) { return q.join(','); }).join(' ');
+          svg.appendChild(sv('polyline', { class: 'prev-halo', points: pl }));
+          svg.appendChild(sv('polyline', { class: 'prev', points: pl }));
+        }
       });
+    }
+    function choose(dd) {
+      bars.forEach(function (b, i) { if (b) b.setAttribute('class', 'bar' + (i === dd ? ' sel' : '')); });
+      showTip(tip, st, dd);
     }
     for (d = 1; d <= st.dim; d++) (function (dd) {
       var hit = sv('rect', { class: 'hit', x: (padL + step * (dd - 1)).toFixed(2), y: padT, width: step.toFixed(2), height: ch + 14 });
-      hit.addEventListener('click', function () {
-        bars.forEach(function (b, i) { if (b) b.setAttribute('class', 'bar' + (i === dd ? ' sel' : '')); });
-        showTip(tip, st, dd);
-      });
+      hit.addEventListener('click', function () { choose(dd); });
       svg.appendChild(hit);
     })(d);
+    // 棒は細いので、押した位置・なぞった位置の横の座標から日を決める
+    var down = false;
+    function fromX(e) {
+      var r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * W / r.width;
+      var dd = Math.floor((vx - padL) / step) + 1;
+      if (dd >= 1 && dd <= st.dim) choose(dd);
+    }
+    svg.addEventListener('pointerdown', function (e) { down = true; fromX(e); });
+    svg.addEventListener('pointermove', function (e) { if (down) fromX(e); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (n) { svg.addEventListener(n, function () { down = false; }); });
     wrap.appendChild(svg);
   }
 
@@ -691,7 +749,7 @@ if (typeof module !== 'undefined') module.exports = SB;
     return el('details', { class: 'tbl' }, [
       el('summary', { text: '日ごとの売上を表で見る' }),
       el('div', { class: 'tbl-scroll' }, [el('table', { class: 'data' }, [
-        el('thead', null, [el('tr', null, [el('th', { scope: 'col', text: '日付' }), el('th', { scope: 'col', text: '今月' }), st.prevExists ? el('th', { scope: 'col', text: '先月の同じ日' }) : null])]),
+        el('thead', null, [el('tr', null, [el('th', { scope: 'col', text: '日付' }), el('th', { scope: 'col', text: st.m + '月' }), st.prevExists ? el('th', { scope: 'col', text: st.prevM + '月の同じ日' }) : null])]),
         el('tbody', null, rows)
       ])])
     ]);
@@ -748,10 +806,11 @@ if (typeof module !== 'undefined') module.exports = SB;
     function fit(s, maxW, size, weight) { x.font = (weight || 400) + ' ' + size + 'px ' + F; if (x.measureText(s).width <= maxW) return s; while (s.length > 1 && x.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; }
     t(st.y + '年' + st.m + '月の売上', 60, 96, 52, C.ink, 800);
     t(st.partial ? '1〜' + st.lastDay + '日（データのある日まで）' : '1か月分', 60, 140, 28, C.ink3, 400);
+    var cm = cmpText(st);
     var cards = [
-      ['今月の合計', SB.yen(st.total), '売上のあった日 ' + st.salesDays + '日'],
-      [st.prevExists ? (st.partial ? '先月の1〜' + st.prevUpto + '日と比べて' : '先月と比べて') : '先月と比べて', st.prevExists ? SB.signed(st.diff) : '—', st.prevExists ? (st.pct === null ? '先月は0円' : SB.pctText(st.pct)) : '先月のデータなし'],
-      ['1日あたり', SB.yen(st.perDay), st.prevExists && st.prevDaysN ? '先月 ' + SB.yen(st.prevPerDay) : ''],
+      [st.m + '月の合計', SB.yen(st.total), '売上のあった日 ' + st.salesDays + '日'],
+      [cm.k, cm.v, st.cmp === 'ok' ? SB.pctText(st.pct) : cm.s],
+      ['1日あたり', SB.yen(st.perDay), st.prevExists && st.prevDaysN && st.cmp !== 'start' ? (st.partial ? st.prevM + '月1〜' + st.prevUpto + '日 ' : st.prevM + '月 ') + SB.yen(st.prevPerDay) : ''],
       ['一番売れた日', st.best ? SB.yen(st.bestAmt) : '—', st.best ? SB.dayLabel(st.y, st.m, st.best) : '']
     ];
     cards.forEach(function (cd, i) {
@@ -784,8 +843,8 @@ if (typeof module !== 'undefined') module.exports = SB;
         run.forEach(function (dd, i) { var q = pt(dd); if (i) x.lineTo(q[0], q[1]); else x.moveTo(q[0], q[1]); });
         x.stroke(); x.setLineDash([]);
       });
-      t('棒＝今月　点線＝先月の同じ日　●＝土日祝', 60, gy + gh + 84, 22, C.ink2);
-    } else t('棒＝今月　●＝土日祝', 60, gy + gh + 84, 22, C.ink2);
+      t('棒＝' + st.m + '月　点線＝' + st.prevM + '月の同じ日　●＝土日祝', 60, gy + gh + 84, 22, C.ink2);
+    } else t('棒＝' + st.m + '月　●＝土日祝', 60, gy + gh + 84, 22, C.ink2);
     // 曜日別
     var by = 960;
     t('曜日ごとの1日平均', 60, by, 30, C.ink, 700);
@@ -829,7 +888,7 @@ if (typeof module !== 'undefined') module.exports = SB;
       return;
     }
     var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    out.appendChild(el('p', { class: 'small', text: '画像（' + name + '）を保存しました。' }));
+    out.appendChild(el('p', { class: 'small', text: '画像（' + name + '）の保存を始めました。' }));
   }
   function showLongPress(out, url) {
     out.appendChild(el('p', { text: '下の画像を長押しして「写真に追加」または「画像を保存」を選んでください。' }));
@@ -847,5 +906,7 @@ if (typeof module !== 'undefined') module.exports = SB;
   window.SBUI = { loadText: loadText, renderPng: function () { return lastStats ? renderPng(lastStats) : null; } };
 })();
 </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js"
+        data-cf-beacon='{"token": "b4c9f7e78daf4edb84ef52b88633f649"}'></script>
 </body>
 </html>

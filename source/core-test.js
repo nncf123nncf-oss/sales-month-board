@@ -20,7 +20,8 @@ function load(text) {
 function stats(text, y, m, latest) { const L = load(text); return SB.monthStats(L.d.recs, y, m, latest); }
 
 // ---- S1 見本のデータ: 別に書いた素朴な集計と突き合わせる ----
-const csv = SB.sampleCsv();
+const TODAY = { y: 2026, m: 10, d: 28 };
+const csv = SB.sampleCsv(TODAY);
 const lines = csv.trim().split('\r\n').slice(1).map(l => l.split(','));
 const naive = {};
 lines.forEach(([dt, item, q, a]) => { const k = dt.slice(0, 10); (naive[k] = naive[k] || { sum: 0, items: {} }).sum += +a; naive[k].items[item] = (naive[k].items[item] || 0) + +a; });
@@ -51,7 +52,10 @@ eq('S1 top5', J(s10.items).map(i => [i.name, i.total]), Object.entries(itemsN).s
 eq('S1 qty', s10.hasQty, true);
 eq('S1 sep complete', [s9.partial, s9.prevExists, s9.pct], [false, false, null]);
 eq('S1 oct up ~10%', s10.pct > 3 && s10.pct < 20, true);
-eq('S1 deterministic', SB.sampleCsv() === csv, true);
+eq('S1 deterministic', SB.sampleCsv(TODAY) === csv, true);
+const janCsv = SB.sampleCsv({ y: 2027, m: 1, d: 1 });
+const janLines = janCsv.trim().split(/\r\n/);
+eq('S1 sample on 1st', [janLines[1].slice(0, 7), janLines[janLines.length - 1].slice(0, 10)], ['2026/11', '2026/12/31']);
 console.log('見本: 10月合計', SB.yen(s10.total), '先月1〜27日', SB.yen(s10.prevTotal), SB.signed(s10.diff), SB.pctText(s10.pct), '1日あたり', SB.yen(s10.perDay), '一番', SB.dayLabel(2026, 10, s10.best), SB.yen(s10.bestAmt));
 
 // ---- S2 文字コード ----
@@ -134,6 +138,41 @@ eq('S6 keyword with some unreadable', [g.date, g.amount], [0, 1]);
 g = load(['x,y', '2026/10/03,1000', '2026/10/04,abc', '2026/10/05,abc'].join('\n')).cols;
 eq('S6 no keyword mostly unreadable', g.amount, -1);
 
+// レビュー①で見つかった取り違え（見出しの言葉の点数づけの穴）
+const amtOf = rows => load(rows.join('\n')).cols;
+g = amtOf(['日付,商品,税込単価,数量,金額', '2026/10/01,ラテ,550,2,1100', '2026/10/02,紅茶,500,1,500']);
+eq('S6 unit price', g.amount, 4);
+g = amtOf(['Date,Subtotal,Discount Amount,Total', '2026-10-01,1200,200,1000', '2026-10-02,800,0,800']);
+eq('S6 subtotal/discount', g.amount, 3);
+g = amtOf(['日付,金額,お預り金額', '2026/10/01,550,1000', '2026/10/02,500,500']);
+eq('S6 received', g.amount, 1);
+g = amtOf(['日付,合計件数,売上', '2026/10/01,12,15000', '2026/10/02,9,11000']);
+eq('S6 count', g.amount, 2);
+g = amtOf(['2026/10/01,10023456,カフェラテ,550', '2026/10/02,10023457,紅茶,500']);
+eq('S6 no header slip no', [g.amount, g.sure], [3, false]);
+g = amtOf(['日付,電話,金額', '2026/10/01,09012345678,550', '2026/10/02,0312345678,500']);
+eq('S6 phone', g.amount, 2);
+g = amtOf(['Date,Total Paid', '2026-10-01,1000']);
+eq('S6 total paid', [g.amount, g.sure], [1, true]);
+g = amtOf(['date,Grand Total,Tax', '2026-10-01,1100,100']);
+eq('S6 grand total', g.amount, 1);
+// 日付のあとに曜日
+eq('S3 weekday paren', [D('2026/10/01(水)'), D('2026/10/01（水）'), D('20261001(水)')], [{ y: 2026, m: 10, d: 1 }, { y: 2026, m: 10, d: 1 }, { y: 2026, m: 10, d: 1 }]);
+eq('S6 weekday paren cols', amtOf(['日付,金額', '2026/10/01(水),550', '2026/10/02(木),500']).date, 0);
+// 先頭の題名の行
+let pp = SB.prepare(SB.parseTable('売上一覧,期間 2026/10/01～2026/10/31\n\n日付,商品,金額\n2026/10/01,ラテ,550\n').rows);
+eq('S5 title rows', [pp.skipped, pp.hasHeader, pp.rows[0]], [1, true, ['日付', '商品', '金額']]);
+pp = SB.prepare(SB.parseTable('R8/10/01,山田,550\n2026/10/02,紅茶,500\n').rows);
+eq('S5 first row unreadable date', [pp.skipped, pp.hasHeader], [1, false]);
+pp = SB.prepare(SB.parseTable('2026/10/01,ラテ,550\n').rows);
+eq('S5 no header', [pp.skipped, pp.hasHeader], [0, false]);
+// 閉じていない引用符
+const uq = SB.parseTable('日付,商品,金額\n2026/10/01,"お試し,550\n2026/10/02,紅茶,500\n');
+eq('S5 unclosed', [uq.unclosed, uq.rows.length, uq.rows[2]], [true, 3, ['2026/10/02', '紅茶', '500']]);
+// 品目名が Object の名前
+const proto = stats('日付,商品,金額\n2026/10/01,constructor,100\n2026/10/01,toString,200\n2026/10/01,__proto__,300\n2026/10/01,ラテ,50\n', 2026, 10, true);
+eq('S6 proto names', J(proto.items).map(i => i.name), ['__proto__', 'toString', 'constructor', 'ラテ']);
+
 // ---- S7 月の扱い ----
 const mk = rows => '日付,金額\n' + rows.map(r => r.join(',')).join('\n') + '\n';
 let s = stats(mk([['2026/09/01', 100], ['2026/09/30', 300], ['2026/10/01', 200], ['2026/10/31', 400]]), 2026, 10, true);
@@ -152,6 +191,29 @@ eq('S7 past month not partial', [s.partial, s.upto], [false, 30]);
 s = stats(mk([['2026/10/02', 100], ['2026/10/02', 50]]), 2026, 10, true);
 eq('S7 single', [s.total, s.salesDays, s.best, s.bestAmt], [150, 1, 2, 150]);
 
+// 前の月のデータが途中から始まる（レビュー①）
+const st7 = (rows, y, m, opt) => { const L = load(mk(rows)); return SB.monthStats(L.d.recs, y, m, opt); };
+const rows15 = []; for (let d = 15; d <= 30; d++) rows15.push(['2026/09/' + d, 1000]); for (let d = 1; d <= 27; d++) rows15.push(['2026/10/' + String(d).padStart(2, '0'), 1000]);
+s = st7(rows15, 2026, 10, true);
+eq('S7 prev starts 15', [s.cmp, s.prevFrom, s.pct], ['start', 15, null]);
+s = st7([['2026/09/10', 500], ['2026/10/03', 1000]], 2026, 10, true);
+eq('S7 prev starts 10, upto 3', [s.cmp, s.prevFrom], ['start', 10]);
+s = st7([['2026/09/01', 0], ['2026/09/10', 500], ['2026/10/03', 1000]], 2026, 10, true);
+eq('S7 prev from day1 zero range', [s.cmp, s.prevTotal], ['zero', 0]);
+s = st7([['2026/09/01', -500], ['2026/10/01', 1000]], 2026, 10, true);
+eq('S7 prev negative', [s.cmp, s.pct], ['neg', null]);
+// 末日が定休日の締まった月（端末の今日で判定）
+const nov = []; for (let d = 1; d <= 29; d++) nov.push(['2026/11/' + String(d).padStart(2, '0'), 100]); nov.unshift(['2026/10/01', 100], ['2026/10/31', 100]);
+s = st7(nov, 2026, 11, { latest: true, today: { y: 2026, m: 12 } });
+eq('S7 closed month ends on holiday', [s.partial, s.prevUpto], [false, 31]);
+s = st7(nov, 2026, 11, { latest: true, today: { y: 2026, m: 11 } });
+eq('S7 current month still partial', [s.partial, s.prevUpto], [true, 29]);
+s = st7(nov, 2026, 11, { latest: true, today: { y: 2026, m: 11 }, truncated: true });
+eq('S7 truncated not partial', s.partial, false);
+// 全部マイナスの月
+s = st7([['2026/10/01', -100], ['2026/10/02', -50]], 2026, 10, true);
+eq('S7 best none when negative', [s.best, s.bestAmt], [0, 0]);
+
 // ---- S8 マイナス ----
 let L8 = load(mk([['2026/10/01', 1000], ['2026/10/01', '△200'], ['2026/10/02', -100]]));
 eq('S8 neg count', L8.d.neg, 2);
@@ -167,7 +229,7 @@ eq('fmt yen', SB.yen(412800), '412,800円');
 eq('fmt yen round', SB.yen(12.5), '13円');
 eq('fmt signed', [SB.signed(38200), SB.signed(-3000), SB.signed(0.2)], ['＋38,200円', '−3,000円', '±0円']);
 eq('fmt pct', [SB.pctText(10.24), SB.pctText(-3.06), SB.pctText(0.01), SB.pctText(null)], ['＋10.2%', '−3.1%', '±0%', '']);
-eq('fmt axis', [SB.axisYen(0), SB.axisYen(5000), SB.axisYen(20000), SB.axisYen(125000)], ['0', '5,000', '2万', '12.5万']);
+eq('fmt axis', [SB.axisYen(0), SB.axisYen(5000), SB.axisYen(20000), SB.axisYen(125000), SB.axisYen(150000000), SB.axisYen(100000000)], ['0', '5,000', '2万', '12.5万', '1.5億', '1億']);
 eq('fmt nice', [SB.niceScale(0), SB.niceScale(38080), SB.niceScale(87000), SB.niceScale(9000), SB.niceScale(40000)].map(o => [o.top, o.step, o.n]), [[1000, 250, 4], [40000, 10000, 4], [100000, 25000, 4], [10000, 2500, 4], [40000, 10000, 4]]);
 eq('prevRuns', J(SB.prevRuns({ has: [false, true, true, false, true, false, true, true, true] }, 8)), [[1, 2], [4], [6, 7, 8]]);
 eq('dayLabel holiday', SB.dayLabel(2026, 10, 12), '10月12日（月・祝）');
@@ -184,7 +246,11 @@ const mem = { s: {}, getItem(k) { return this.s[k] || null; }, setItem(k, v) { t
 SB.saveCols(mem, ['日付', '金額'], { date: 0, amount: 1, item: -1, qty: -1, width: 2 });
 eq('cols saved', J(SB.loadCols(mem, ['日付', '金額'])), { date: 0, amount: 1, item: -1, qty: -1 });
 eq('cols other head', SB.loadCols(mem, ['日付', '売上']), null);
-eq('cols stored only heads', JSON.parse(mem.s[SB.COLS_KEY])[0].k, '日付\u001f金額');
+eq('cols stored as hash', /^[0-9a-f]{8}-2$/.test(JSON.parse(mem.s[SB.COLS_KEY])[0].k), true);
+eq('cols no readable head', /日付|金額/.test(mem.s[SB.COLS_KEY]), false);
+mem.s['sales-month-board-cols-v1'] = '[{"k":"x","c":{}}]'; mem.removeItem = function (k) { delete this.s[k]; };
+SB.saveCols(mem, ['日付', '金額'], { date: 0, amount: 1, item: -1, qty: -1 });
+eq('old key removed', mem.s['sales-month-board-cols-v1'], undefined);
 mem.s[SB.COLS_KEY] = '{broken'; eq('cols broken', SB.loadCols(mem, ['日付', '金額']), null);
 mem.s = {}; for (let i = 0; i < 12; i++) SB.saveCols(mem, ['h' + i], { date: 0, amount: 1, item: -1, qty: -1 });
 eq('cols max 10', JSON.parse(mem.s[SB.COLS_KEY]).length, 10);

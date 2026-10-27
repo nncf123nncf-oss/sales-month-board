@@ -23,6 +23,8 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
   const reqs = [];
   b.on(m => { if (m.method === 'Network.requestWillBeSent') reqs.push(m.params.request.url); });
   await b.send('Network.enable');
+  // 端末の今日を 2026-10-28 に固定する（見本のデータと「途中の月」の判定が今日の日付で変わるため）
+  await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(()=>{const T=Date.UTC(2026,9,28,1,0,0);const D=Date;function F(...a){return a.length?new D(...a):new D(T)}F.now=()=>T;F.UTC=D.UTC;F.parse=D.parse;F.prototype=D.prototype;window.Date=F})()` });
   await b.send('Network.setBlockedURLs', { urls: ['*cloudflareinsights.com*'] });
   const errs = [];
   b.on(m => { if (m.method === 'Runtime.exceptionThrown') errs.push(m.params.exceptionDetails.text + ' ' + JSON.stringify(m.params.exceptionDetails.exception && m.params.exceptionDetails.exception.description)); });
@@ -40,7 +42,7 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
   await b.ev(click('見本のデータで試す')); await b.sleep(400);
   m = await b.ev(measure); ok('sample 375 no overflow', m.sw <= 375 && !m.over.length, m); ok('sample 375 targets', !m.small.length, m.small); ok('sample 375 values fit', !m.vover.length, m.vover);
   const c1 = await b.ev(cards);
-  ok('cards', c1.length === 4 && /^[\d,]+円$/.test(c1[0][1]) && /先月の1〜27日と比べて/.test(c1[1][0]) && /^＋[\d,]+円$/.test(c1[1][1]) && /10月\d+日（土）/.test(c1[3][2]), c1);
+  ok('cards', c1.length === 4 && /^[\d,]+円$/.test(c1[0][1]) && c1[0][0] === '10月の合計' && c1[1][0] === '9月の1〜27日と比べて' && /^9月1〜27日 [\d,]+円（\d+日）$/.test(c1[2][2]) && /^＋[\d,]+円$/.test(c1[1][1]) && /10月\d+日（土）/.test(c1[3][2]), c1);
   ok('month title', await b.ev(`document.getElementById('h-month').textContent`) === '2026年10月1〜27日（データのある日まで）');
   ok('status', /見本のデータ.*を読みました（[\d,]+行）/.test(await b.ev(`document.querySelector('.status').textContent`)));
   ok('cols summary', await b.ev(`document.querySelector('details.cols summary').textContent`) === '使っている列: 日付: 売上日時／金額: 税込金額／品目: 商品名');
@@ -48,13 +50,13 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
   ok('prev line', await b.ev(`!!document.querySelector('svg.chart polyline.prev')`));
   ok('wk marks', await b.ev(`document.querySelectorAll('svg.chart circle.wk').length`) === 10, await b.ev(`document.querySelectorAll('svg.chart circle.wk').length`)); // 10月: 土日9日＋スポーツの日
   const tip0 = await b.ev(`document.querySelector('.tip-line').textContent`);
-  ok('tip best', /^10月\d+日（土） [\d,]+円／先月\d+日 /.test(tip0), tip0);
+  ok('tip best', /^10月\d+日（土） [\d,]+円／9月\d+日 /.test(tip0), tip0);
   await b.ev(`document.querySelectorAll('svg.chart rect.hit')[11].dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
   const tip12 = await b.ev(`document.querySelector('.tip-line').textContent`);
-  ok('tip tap 12', /^10月12日（月・祝） 売上なし／先月12日 [\d,]+円$/.test(tip12), tip12); // 見本は月曜定休（祝日も）
+  ok('tip tap 12', /^10月12日（月・祝） 売上なし／9月12日 [\d,]+円$/.test(tip12), tip12); // 見本は月曜定休（祝日も）
   ok('sel bar moved', await b.ev(`[...document.querySelectorAll('svg.chart rect.bar')].findIndex(r=>r.classList.contains('sel'))`) === 11);
   await b.ev(`document.querySelectorAll('svg.chart rect.hit')[4].dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
-  ok('tip monday closed', /^10月5日（月） 売上なし／先月5日/.test(await b.ev(`document.querySelector('.tip-line').textContent`)));
+  ok('tip monday closed', /^10月5日（月） 売上なし／9月5日/.test(await b.ev(`document.querySelector('.tip-line').textContent`)));
   ok('weekday rows', JSON.stringify(await b.ev(`[...document.querySelectorAll('#board .hbars:not(.items) li .lb')].map(x=>x.firstChild.textContent)`)) === JSON.stringify(['月曜', '火曜', '水曜', '木曜', '金曜', '土曜', '日曜']));
   ok('weekday monday none', /売上なし/.test(await b.ev(`document.querySelector('#board .hbars li').textContent`)));
   const items = await b.ev(`[...document.querySelectorAll('.hbars.items li')].map(li=>li.textContent)`);
@@ -66,7 +68,7 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
   // 3) 月の切り替え（9月＝先月のデータなし・月全体）
   await b.ev(click('◀ 前の月')); await b.sleep(200);
   const c9 = await b.ev(cards);
-  ok('sept', await b.ev(`document.getElementById('h-month').textContent`) === '2026年9月1か月分' && c9[1][2] === '先月のデータがありません' && c9[1][1] === '—', c9);
+  ok('sept', await b.ev(`document.getElementById('h-month').textContent`) === '2026年9月1か月分' && c9[0][0] === '9月の合計' && c9[1][0] === '8月と比べて' && c9[1][2] === '8月のデータがありません' && c9[1][1] === '—', c9);
   ok('sept nav', await b.ev(`[document.querySelector('[data-nav=prev]').disabled,document.querySelector('[data-nav=next]').disabled,document.activeElement.dataset.nav]`).then(x => JSON.stringify(x)) === '[true,false,"next"]');
   ok('sept no prev line', await b.ev(`!document.querySelector('svg.chart polyline.prev')`));
   await b.ev(click('次の月 ▶')); await b.sleep(200);
@@ -79,7 +81,18 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
     if (w >= 880) ok(`cards 4 in a row ${w}`, await b.ev(`(()=>{const c=[...document.querySelectorAll('.card')].map(x=>Math.round(x.getBoundingClientRect().top));return new Set(c).size===1})()`));
     await b.shot(path.join(OUT, `sample-${w}-${scheme}.png`), { x: 0, y: 0, width: w, height: Math.min(4000, await b.ev(`document.documentElement.scrollHeight`)) });
   }
-  const darkBar = await b.ev(`getComputedStyle(document.querySelector('svg.chart rect.bar')).fill`);
+  // 桁の多い金額（タダス検算②の再現: 日額に123,456,789円・数量つき・長い品目名）を320px・375pxで
+  const huge = ['日付,商品,数量,金額'];
+  for (let d = 1; d <= 30; d++) huge.push('2026/09/' + String(d).padStart(2, '0') + ',品目' + (d % 3) + ',1,' + (500000 + d * 37000));
+  for (let d = 1; d <= 20; d++) huge.push('2026/10/' + String(d).padStart(2, '0') + ',' + (d % 2 ? 'とても長い品目名の見本です'.repeat(3) : '短い') + ',12345,' + (d === 10 ? 123456789 : 600000 + d * 41000));
+  for (const w of [320, 375]) {
+    await b.open(ORIGIN, w, 900, 2, true, 'light');
+    await b.ev(`document.querySelector('details.paste').open=true;document.getElementById('paste').value=${JSON.stringify(huge.join('\n'))};` + click('貼った表を読む')); await b.sleep(300);
+    m = await b.ev(measure);
+    const numOut = await b.ev(`[...document.querySelectorAll('.hbars .num')].filter(n=>{const p=n.closest('.panel').getBoundingClientRect(),r=n.getBoundingClientRect();return r.right>p.right-1}).map(n=>n.textContent)`);
+    ok(`huge ${w} no overflow`, m.sw <= w && !m.over.length && !m.vover.length && !numOut.length, { m, numOut });
+  }
+  const darkBar =await b.ev(`getComputedStyle(document.querySelector('svg.chart rect.bar')).fill`);
   ok('dark ok', !!darkBar, darkBar);
 
   // 5) ファイル選択（Shift_JIS）
@@ -101,8 +114,18 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
   await b.ev(click('貼った表を読む')); await b.sleep(200);
   ok('remembered cols', (await b.ev(cards))[0][1] === '5円');
   const store = await b.ev(`JSON.stringify({l:Object.assign({},localStorage),s:Object.assign({},sessionStorage)})`);
-  const keys = JSON.parse(JSON.parse(store).l['sales-month-board-cols-v1']).map(e => e.k);
-  ok('storage only heads', !/2026|1000|2000|カフェ|紅茶/.test(store) && Object.keys(JSON.parse(store).s).length === 0 && keys.includes('日付\u001f件数\u001f売上'), keys);
+  ok('storage no data or heads', !/2026|1000|2000|カフェ|紅茶|日付|件数|売上/.test(store) && Object.keys(JSON.parse(store).s).length === 0 && /sales-month-board-cols-v2/.test(store), store);
+  // 見出しの無いCSVで1行目の日付が読めない形（レビュー①）: 1行目を読み飛ばし、見出しにしない。列を選び直しても読める文字は残らない
+  await b.ev(`document.getElementById('paste').value='R8/10/01,山田太郎,taro@example.com,550\\n2026/10/02,紅茶,x,500\\n2026/10/03,ラテ,y,550';` + click('貼った表を読む')); await b.sleep(200);
+  await b.ev(`(()=>{const s=document.getElementById('col-item');s.value='1';s.dispatchEvent(new Event('change'))})()`); await b.sleep(200);
+  const store2 = await b.ev(`JSON.stringify(Object.assign({},localStorage))`);
+  ok('storage no row text', !/山田|taro|R8/.test(store2), store2);
+  ok('skipped note', (await b.ev(`[...document.querySelectorAll('.warn')].map(x=>x.textContent).join('|')`)).includes('先頭の1行は'));
+  ok('guessed note (no header)', /中身から選びました/.test(await b.ev(`document.querySelector('details.cols').textContent`)) || await b.ev(`document.querySelector('#col-item').value==='1'`));
+  // 題名の行・曜日つきの日付・閉じていない引用符
+  await b.ev(`document.getElementById('paste').value='売上一覧,期間 2026/10/01～2026/10/31\\n日付,商品,金額\\n2026/10/01(水),ラテ,550\\n2026/10/02(木),"お試し,500\\n';` + click('貼った表を読む')); await b.sleep(200);
+  const w3 = await b.ev(`[...document.querySelectorAll('.warn')].map(x=>x.textContent).join('|')`);
+  ok('title+paren+unclosed', (await b.ev(cards))[0][1] === '1,050円' && /先頭の1行/.test(w3) && /引用符/.test(w3), [w3, await b.ev(cards)]);
 
   // 7) 列を推測できない（1列だけ）
   await b.ev(`document.getElementById('paste').value='2026/10/01\\n2026/10/02';` + click('貼った表を読む')); await b.sleep(200);
@@ -139,8 +162,10 @@ const cards = `[...document.querySelectorAll('.card')].map(c=>[...c.children].ma
   ok('ios share file', sh && sh[0] === 1 && sh[1] === 'sales-2026-10.png' && sh[2] === 'image/png' && sh[3] > 5000, sh);
 
   // 11) 外への通信（ページ自体以外に無い）
-  const ext = reqs.filter(u => !u.startsWith(ORIGIN) && !u.startsWith('data:') && !u.startsWith('blob:'));
-  ok('no external requests', ext.length === 0, ext.slice(0, 5));
+  // 計測ビーコン（Cloudflare Web Analytics。検算ではブロック）以外の外への通信が無い
+  const ext = reqs.filter(u => !u.startsWith(ORIGIN) && !u.startsWith('data:') && !u.startsWith('blob:') && !/^https:\/\/static\.cloudflareinsights\.com\/beacon\.min\.js/.test(u));
+  ok('no external requests except beacon', ext.length === 0, ext.slice(0, 5));
+  ok('beacon tag present', /static\.cloudflareinsights\.com\/beacon\.min\.js/.test(HTML.toString()));
   ok('no js errors', errs.length === 0, errs.slice(0, 3));
   b.close(); srv.close();
   console.log(ng ? 'FAIL ' + ng : 'ALL PASS');
